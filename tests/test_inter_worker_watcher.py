@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -27,6 +27,7 @@ def _message(
     content: str = "x",
     ts: float = 0.0,
     msg_type: str = "dependency",
+    msg_id: int = 1,
 ) -> MagicMock:
     """Construct a fake Message. Defaults to ``msg_type='dependency'``
     since task #271 narrowed the nudge trigger to action-required types
@@ -35,6 +36,7 @@ def _message(
     the skip-on-informational path should pass ``msg_type='finding'``
     (or similar)."""
     m = MagicMock()
+    m.id = msg_id
     m.sender = sender
     m.recipient = recipient
     m.content = content
@@ -73,6 +75,7 @@ def _watcher(
     rate_limit_check=None,
     sender: _Sender | None = None,
     task_board: MagicMock | None = None,
+    spawn_handoff_task=None,
 ) -> tuple[InterWorkerMessageWatcher, _Sender, MagicMock]:
     sender = sender if sender is not None else _Sender()
     drone_log = MagicMock()
@@ -87,6 +90,7 @@ def _watcher(
         send_to_worker=sender,
         rate_limit_check=rate_limit_check,
         task_board=task_board,
+        spawn_handoff_task=spawn_handoff_task,
     )
     return w, sender, drone_log
 
@@ -585,3 +589,93 @@ async def test_task_board_raising_falls_back_to_with_task_filter() -> None:
 
     assert sent == 0
     assert sender.calls == []
+
+
+# ---------------------------------------------------------------------------
+# task #442 — actionable handoff → idle task-less recipient spawns a
+# *tracked* task instead of relying on a skip-prone one-shot nudge.
+# Repro reference: public-website msg #985 → realtruth (idle/task-less).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_handoff_to_idle_taskless_recipient_spawns_tracked_task() -> None:
+    """The #985 pattern: idle, task-less recipient + unread dependency
+    handoff → a tracked task is spawned (not just a nudge)."""
+    msg = _message("public-website", "realtruth", msg_type="dependency", msg_id=985)
+    store = _store({"realtruth": [msg]})
+    spawn = AsyncMock(return_value=True)
+    board = _task_board()  # realtruth not in set → task-less
+    watcher, sender, drone_log = _watcher(store=store, task_board=board, spawn_handoff_task=spawn)
+
+    sent = await watcher.sweep([_worker("realtruth", WorkerState.RESTING)], now=1000.0)
+
+    assert sent == 1
+    spawn.assert_awaited_once_with("realtruth", msg)
+    # Spawn replaces the nudge this sweep — assign-and-start prompts the
+    # worker, so a nudge would double up.
+    assert sender.calls == []
+    action = drone_log.add.call_args[0][0]
+    assert action is DroneAction.AUTO_HANDOFF_TASK
+
+
+@pytest.mark.asyncio
+async def test_handoff_task_not_spawned_twice_for_same_message() -> None:
+    """A still-unread handoff must not re-spawn a task every sweep."""
+    msg = _message("public-website", "realtruth", msg_type="dependency", msg_id=985)
+    store = _store({"realtruth": [msg]})
+    spawn = AsyncMock(return_value=True)
+    watcher, _, _ = _watcher(store=store, task_board=_task_board(), spawn_handoff_task=spawn)
+
+    await watcher.sweep([_worker("realtruth", WorkerState.RESTING)], now=1000.0)
+    await watcher.sweep([_worker("realtruth", WorkerState.RESTING)], now=2000.0)
+
+    assert spawn.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_no_handoff_task_when_recipient_has_active_task() -> None:
+    """With an active task the IdleWatcher already carries the worker —
+    don't spawn; the existing with-task nudge path handles it."""
+    msg = _message("public-website", "realtruth", msg_type="dependency", msg_id=985)
+    store = _store({"realtruth": [msg]})
+    spawn = AsyncMock(return_value=True)
+    board = _task_board(workers_with_tasks={"realtruth"})
+    watcher, sender, _ = _watcher(store=store, task_board=board, spawn_handoff_task=spawn)
+
+    sent = await watcher.sweep([_worker("realtruth", WorkerState.RESTING)], now=1000.0)
+
+    spawn.assert_not_awaited()
+    assert sent == 1  # fell through to the normal with-task nudge
+    assert len(sender.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_no_handoff_task_for_informational_only_message() -> None:
+    """Spawn is scoped to action-bearing types — a status/finding ping
+    to a task-less worker still nudges (no-task widening) but does NOT
+    spawn a task (would flood the board with FYI chatter)."""
+    msg = _message("public-website", "realtruth", msg_type="status", msg_id=985)
+    store = _store({"realtruth": [msg]})
+    spawn = AsyncMock(return_value=True)
+    watcher, sender, _ = _watcher(store=store, task_board=_task_board(), spawn_handoff_task=spawn)
+
+    sent = await watcher.sweep([_worker("realtruth", WorkerState.RESTING)], now=1000.0)
+
+    spawn.assert_not_awaited()
+    assert sent == 1  # no-task widening still nudges on any unread
+    assert len(sender.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_no_spawn_callback_falls_back_to_nudge() -> None:
+    """When the daemon hasn't wired the spawn callback the watcher
+    degrades to the prior nudge-only behaviour (no crash)."""
+    msg = _message("public-website", "realtruth", msg_type="dependency", msg_id=985)
+    store = _store({"realtruth": [msg]})
+    watcher, sender, _ = _watcher(store=store, task_board=_task_board(), spawn_handoff_task=None)
+
+    sent = await watcher.sweep([_worker("realtruth", WorkerState.RESTING)], now=1000.0)
+
+    assert sent == 1
+    assert len(sender.calls) == 1

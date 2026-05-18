@@ -671,6 +671,7 @@ class SwarmDaemon(EventEmitter):
             mcp_activity_lookup=get_worker_last_mcp_activity,
             daemon_start_time=getattr(self, "daemon_start_time", None),
             interrupt_worker=self.interrupt_worker,
+            spawn_handoff_task=self._spawn_handoff_task,
         )
         # Wire the Dreamer drone's read sources. The drone_log already
         # holds a reference to the BuzzStore (used for buzz log writes);
@@ -2192,6 +2193,59 @@ class SwarmDaemon(EventEmitter):
                 worker_name,
                 exc_info=True,
             )
+
+    async def _spawn_handoff_task(self, recipient: str, message: object) -> bool:
+        """task #442: turn an actionable cross-worker handoff to an idle,
+        task-less recipient into a *tracked* task assigned to that
+        recipient — so the IdleWatcher carries it to completion instead
+        of the handoff living only in a skip-prone one-shot nudge that a
+        missed turn or a daemon restart silently loses (the #985 →
+        realtruth incident; #441 was the manual backfill this removes
+        the need for).
+
+        Wired into ``InterWorkerMessageWatcher`` via
+        ``set_idle_nudge_sender``. Returns True when a task was created
+        and assigned. Idempotency is handled upstream: the watcher
+        de-dupes per message id, and once this assignment lands the
+        recipient has an active task so the watcher's ``has_task`` gate
+        stops it re-firing.
+        """
+        board = getattr(self, "task_board", None)
+        if board is None:
+            return False
+        sender = getattr(message, "sender", "") or "?"
+        msg_type = getattr(message, "msg_type", "dependency")
+        msg_id = getattr(message, "id", None)
+        content = (getattr(message, "content", "") or "").strip()
+        first_line = content.splitlines()[0] if content else "(no content)"
+        title = f"Handoff from {sender}: {first_line[:70]}"
+        description = (
+            f"Auto-spawned by the inter-worker watcher (task #442): "
+            f"{recipient} was idle and task-less when {sender} sent a "
+            f"'{msg_type}' handoff (message #{msg_id}). Process the handoff "
+            f"and complete this task.\n\n--- original message ---\n{content}"
+        )
+        try:
+            task = board.create(
+                title=title,
+                description=description,
+                tags=["auto-handoff"],
+            )
+        except Exception:
+            _log.warning("spawn_handoff_task: create failed for %s", recipient, exc_info=True)
+            return False
+        try:
+            return await self.assign_and_start_task(
+                task.id, recipient, actor="drone:inter-worker-handoff"
+            )
+        except Exception:
+            _log.warning(
+                "spawn_handoff_task: assign_and_start failed for %s (task %s)",
+                recipient,
+                task.id,
+                exc_info=True,
+            )
+            return False
 
     async def assign_and_start_task(
         self,

@@ -682,6 +682,7 @@ class DronePilot(EventEmitter):
         mcp_activity_lookup: Callable[[str], float | None] | None = None,
         daemon_start_time: float | None = None,
         interrupt_worker: Callable[[str], Awaitable[None]] | None = None,
+        spawn_handoff_task: Callable[[str, Any], Awaitable[bool]] | None = None,
     ) -> None:
         """Wire both idle-watcher and inter-worker-watcher callbacks.
 
@@ -727,6 +728,7 @@ class DronePilot(EventEmitter):
             send_to_worker=send_to_worker,
             rate_limit_check=rate_limit_check,
             task_board=self._task_board,
+            spawn_handoff_task=spawn_handoff_task,
         )
         self.context_pressure_watcher = ContextPressureWatcher(
             drone_config=self._drone_config,

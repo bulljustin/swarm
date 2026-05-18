@@ -10,6 +10,29 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.18.3] - 2026-05-18
+
+### Features
+
+### Changes
+
+### Fixes
+
+- **Actionable cross-worker handoffs no longer fall through both drone
+  nets (task #442).** A handoff carried only by a `dependency`/`warning`
+  message to a recipient who is idle *and* task-less was silently lost:
+  the IdleWatcher skipped it (no task to carry) and a one-shot
+  InterWorkerMessageWatcher nudge dies on a missed turn or a daemon
+  restart, leaving the published work unconsumed with nothing tracking
+  it (the public-website #985 → realtruth incident; #441 was the manual
+  backfill). The watcher now spawns a **tracked task** assigned to the
+  recipient (`daemon._spawn_handoff_task` → `assign_and_start_task`), so
+  the IdleWatcher durably carries it to completion. Scoped to
+  action-bearing types only (informational `status`/`finding` still just
+  nudges — no board flooding), idempotent per message id, logged as
+  `AUTO_HANDOFF_TASK`, and a no-op when the spawn callback is unwired
+  (graceful fallback to the prior nudge-only behaviour).
+
 ## [2026.5.18.2] - 2026-05-18
 
 ### Features

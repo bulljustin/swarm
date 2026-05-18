@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from swarm.drones.log import DroneLog
-    from swarm.messages.store import MessageStore
+    from swarm.messages.store import Message, MessageStore
     from swarm.tasks.board import TaskBoard
     from swarm.worker.worker import Worker
 
@@ -115,6 +115,7 @@ class InterWorkerMessageWatcher:
         send_to_worker: Callable[..., Awaitable[None]],
         rate_limit_check: Callable[[str], bool] | None = None,
         task_board: TaskBoard | None = None,
+        spawn_handoff_task: Callable[[str, Message], Awaitable[bool]] | None = None,
     ) -> None:
         self._config = drone_config
         self._message_store = message_store
@@ -122,6 +123,17 @@ class InterWorkerMessageWatcher:
         self._send_to_worker = send_to_worker
         self._rate_limit_check = rate_limit_check
         self._task_board = task_board
+        # task #442: callback that turns an actionable cross-worker
+        # handoff to an idle, task-less recipient into a *tracked* task
+        # assigned to that recipient — so the IdleWatcher then carries
+        # it to completion instead of the handoff relying on a single
+        # skip-prone nudge. Injected by the daemon (None in minimal
+        # setups → falls back to the nudge-only path, unchanged).
+        self._spawn_handoff_task = spawn_handoff_task
+        # message ids we've already spawned a backing task for, so a
+        # still-unread handoff doesn't re-spawn on every sweep before
+        # the board reflects the new assignment.
+        self._spawned_msg_ids: set[int] = set()
         # worker_name → last-nudge monotonic timestamp
         self._last_nudge: dict[str, float] = {}
         # worker_name → last AUTO_NUDGE_MESSAGE_SKIPPED entry timestamp.
@@ -192,6 +204,14 @@ class InterWorkerMessageWatcher:
             # (e.g. minimal test setups) defaults to the conservative
             # with-task path so we don't over-nudge by accident.
             has_task = self._has_active_task(worker.name)
+            # task #442: a task-less idle recipient of an action-bearing
+            # handoff gets a *tracked* task, not just a nudge. Done first
+            # because the spawned assignment flips has_task and the
+            # assign-and-start dispatch already prompts the worker, so a
+            # nudge this sweep would double up.
+            if not has_task and await self._maybe_spawn_handoff(worker.name, inter_worker, now=now):
+                sent += 1
+                continue
             if has_task:
                 actionable = [m for m in inter_worker if m.msg_type in _ACTION_REQUIRED_MSG_TYPES]
             else:
@@ -295,6 +315,62 @@ class InterWorkerMessageWatcher:
                 exc_info=True,
             )
             return True
+
+    async def _maybe_spawn_handoff(
+        self, recipient: str, inter_worker: list[Message], *, now: float
+    ) -> bool:
+        """task #442: turn an action-bearing handoff to a task-less,
+        idle recipient into a *tracked* task assigned to them.
+
+        A nudge alone is one-shot — a missed turn or a daemon restart
+        loses it and the published work sits unconsumed with nothing
+        driving it (the #985 → realtruth incident; #441 was the manual
+        backfill this makes unnecessary). A spawned, assigned task is
+        durable: the IdleWatcher carries it to completion. Idempotent
+        per message id, so a still-unread handoff doesn't re-spawn
+        before the board reflects the assignment. Returns True when a
+        task was spawned (caller then skips the redundant nudge).
+        """
+        if self._spawn_handoff_task is None:
+            return False
+        handoffs = [
+            m
+            for m in inter_worker
+            if m.msg_type in _ACTION_REQUIRED_MSG_TYPES
+            and getattr(m, "id", None) is not None
+            and m.id not in self._spawned_msg_ids
+        ]
+        if not handoffs:
+            return False
+        latest = max(handoffs, key=lambda m: m.created_at)
+        try:
+            ok = await self._spawn_handoff_task(recipient, latest)
+        except Exception:
+            _log.warning(
+                "inter_worker_watcher: spawn_handoff_task failed for %s",
+                recipient,
+                exc_info=True,
+            )
+            return False
+        if not ok:
+            return False
+        for m in handoffs:
+            self._spawned_msg_ids.add(m.id)
+        # Reuse the nudge debounce slot so the existing inter-worker
+        # nudge path doesn't also fire for this worker right after.
+        self._last_nudge[recipient] = now
+        self._drone_log.add(
+            DroneAction.AUTO_HANDOFF_TASK,
+            recipient,
+            (
+                f"actionable handoff from {latest.sender} "
+                f"({latest.msg_type}, msg #{latest.id}) → spawned a tracked "
+                f"task; recipient was idle/task-less "
+                f"({len(handoffs)} unread handoff msg(s))"
+            ),
+            category=LogCategory.DRONE,
+        )
+        return True
 
     def _is_debounced(self, name: str, *, now: float) -> bool:
         """True when this worker was nudged within the debounce window."""
