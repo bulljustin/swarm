@@ -293,6 +293,11 @@ class ClaudeProvider(LLMProvider):
         return True
 
     @property
+    def supports_native_goal(self) -> bool:
+        # Native /goal shipped in Claude Code v2.1.139.
+        return True
+
+    @property
     def supports_resume(self) -> bool:
         return True
 

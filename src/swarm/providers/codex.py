@@ -39,6 +39,11 @@ class CodexProvider(LLMProvider):
     def name(self) -> str:
         return "codex"
 
+    @property
+    def supports_native_goal(self) -> bool:
+        # Codex CLI has a native /goal command (parity with Claude Code).
+        return True
+
     def worker_command(self, resume: bool = True) -> list[str]:
         # --no-alt-screen is critical for PTY text detection
         return ["codex", "--no-alt-screen"]

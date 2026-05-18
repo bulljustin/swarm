@@ -130,6 +130,17 @@ class LLMProvider(ABC):
         return False
 
     @property
+    def supports_native_goal(self) -> bool:
+        """Whether the CLI has a native session-scoped ``/goal`` command.
+
+        When True, Swarm seeds a task's acceptance criteria as a native
+        ``/goal`` at dispatch and lets the provider's own evaluator run
+        the keep-working loop. False = clean no-op (Swarm injects
+        nothing; the generic idle-watcher remains the only safety net).
+        """
+        return False
+
+    @property
     def supports_resume(self) -> bool:
         """Whether the headless CLI supports --resume for session continuity."""
         return False

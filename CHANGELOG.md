@@ -10,6 +10,39 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.18] - 2026-05-18
+
+### Features
+
+- **Native `/goal` seeding from task acceptance criteria (v1).** When a
+  task with `acceptance_criteria` is dispatched to a worker whose CLI
+  has a native session-scoped `/goal` (Claude Code v2.1.139+, Codex),
+  Swarm injects `/goal <condition>` after the task message. The
+  provider's own small-fast-model evaluator then runs the keep-working
+  loop — Swarm builds **no** evaluator, subprocess, or metered API call.
+  This is the *proactive* complement to the existing *reactive*
+  post-completion verifier (which stays as the backstop): it reduces
+  premature `swarm_complete_task` calls rather than reopening after the
+  fact. Inspired by Claude Code's native `/goal` (the "separate the
+  agent that works from the one that decides it's done" pattern).
+  - `LLMProvider.supports_native_goal` capability — `True` for Claude
+    and Codex; Gemini/OpenCode/generic inherit `False` → a clean no-op
+    there (the generic idle-watcher remains the only safety net;
+    provider-neutral by capability detection, not assumption).
+  - `render_goal_condition()` turns criteria into a one-line condition
+    with a proof directive (the evaluator only judges the transcript,
+    not files) and the docs-recommended `or stop after N turns` runaway
+    bound; ≤ 4000 chars.
+  - `DroneConfig.native_goal_enabled` (default on, operator-reversible)
+    and `native_goal_max_turns` (default 25).
+  - Seeded only from `start_task` (the dispatch boundary) so it is
+    set-once-per-dispatch — idle-watcher nudges never re-arm it.
+    Best-effort: a `/goal` send failure cannot unwind a started task.
+    Logged as `SystemAction.GOAL_SET`.
+  - Coordinator/orchestrator-level `/goal` (Queen / project-root holding
+    a macro objective) is deliberately **out of scope for v1** — filed
+    as a separate `/interview`-driven initiative.
+
 ## [2026.5.17.9] - 2026-05-17
 
 ### Fixes

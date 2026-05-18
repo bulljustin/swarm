@@ -2138,7 +2138,60 @@ class SwarmDaemon(EventEmitter):
             f"task started: {task.title}",
             category=LogCategory.TASK,
         )
+
+        await self._maybe_seed_goal(task, worker_name, worker_prov)
         return True
+
+    async def _maybe_seed_goal(
+        self, task: SwarmTask, worker_name: str, worker_prov: object
+    ) -> None:
+        """Seed a native ``/goal`` from the task's acceptance criteria.
+
+        Hands the criteria to the provider's own ``/goal`` evaluator
+        (Claude Code / Codex) so it runs the keep-working loop — Swarm
+        builds no evaluator. Called only from :meth:`start_task` (the
+        dispatch boundary), so it is naturally set-once-per-dispatch:
+        idle-watcher nudges go through ``send_to_worker`` directly and
+        never re-arm the goal. No-op unless the feature flag is on, the
+        task has acceptance criteria, and the worker's provider has a
+        native ``/goal``. Best-effort — the task message already shipped
+        and the task is started, so a ``/goal`` send failure must not
+        unwind that.
+        """
+        drones = self.config.drones
+        if not (
+            drones.native_goal_enabled
+            and task.acceptance_criteria
+            and getattr(worker_prov, "supports_native_goal", False)
+        ):
+            return
+        try:
+            from swarm.server.messages import render_goal_condition
+
+            condition = render_goal_condition(
+                task.acceptance_criteria, max_turns=drones.native_goal_max_turns
+            )
+            if not condition:
+                return
+            await self.send_to_worker(worker_name, f"/goal {condition}", _log_operator=False)
+            await asyncio.sleep(0.3)
+            proc = self._require_worker(worker_name).process
+            if proc and not proc.is_user_active:
+                await proc.send_enter()
+            self.drone_log.add(
+                SystemAction.GOAL_SET,
+                worker_name,
+                f"#{task.number} goal armed: {condition[:120]}",
+                category=LogCategory.TASK,
+                metadata={"task_id": task.id, "task_number": task.number},
+            )
+        except Exception:
+            _log.warning(
+                "native /goal seeding failed for #%s on %s",
+                task.number,
+                worker_name,
+                exc_info=True,
+            )
 
     async def assign_and_start_task(
         self,

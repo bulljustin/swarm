@@ -137,6 +137,14 @@ class DroneConfig:
     # get spammed.
     idle_nudge_interval_seconds: float = 180.0
     idle_nudge_debounce_seconds: float = 900.0
+    # Native /goal seeding: at task dispatch, translate the task's
+    # acceptance_criteria into a native ``/goal`` condition on providers
+    # whose CLI supports it (Claude Code, Codex). The provider's own
+    # evaluator then runs the keep-working loop — Swarm builds no
+    # evaluator. ``native_goal_max_turns`` is the runaway bound baked
+    # into the condition string ("...or stop after N turns...").
+    native_goal_enabled: bool = True
+    native_goal_max_turns: int = 25
     # Auto-assign project-affinity floor (task #341): when neither the
     # deterministic project-affinity scorer nor the headless Queen reach
     # this confidence on a task, the assigner parks the task in backlog

@@ -166,3 +166,29 @@ def build_task_message(task: SwarmTask, *, supports_slash_commands: bool = True)
         parts.append(f"\n{workflow}")
     parts.append(completion)
     return "\n".join(parts)
+
+
+# Native /goal: the provider's evaluator only judges what's already in the
+# session transcript — it does not run tools or read files. So the condition
+# must be phrased as something the worker's own output demonstrates, and
+# (per the docs) carry an explicit runaway bound. ≤ 4000 chars, one line.
+_GOAL_MAX_LEN = 4000
+
+
+def render_goal_condition(criteria: list[str], *, max_turns: int) -> str:
+    """Render a task's acceptance criteria as a one-line native /goal condition.
+
+    Empty criteria → "" (caller skips — no goal is set). The string is
+    the argument to ``/goal`` (the caller prepends ``/goal ``).
+    """
+    cleaned = [" ".join(str(c).split()) for c in criteria if str(c).strip()]
+    if not cleaned:
+        return ""
+    enumerated = "; ".join(f"({i}) {c}" for i, c in enumerate(cleaned, 1))
+    condition = (
+        f"All of these hold, each demonstrated in your own output: {enumerated}"
+        f" — or stop after {max_turns} turns and report what's blocking."
+    )
+    if len(condition) > _GOAL_MAX_LEN:
+        condition = condition[:_GOAL_MAX_LEN]
+    return condition

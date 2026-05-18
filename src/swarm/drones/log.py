@@ -90,6 +90,9 @@ class SystemAction(Enum):
     # #406: a worker proactively handed its own ACTIVE task back to
     # ASSIGNED (swarm_park_task) — intentional set-down, not a blocker.
     TASK_PARKED = "TASK_PARKED"
+    # Native /goal seeded for a task at dispatch — the provider's own
+    # evaluator runs the keep-working loop thereafter.
+    GOAL_SET = "GOAL_SET"
     # Queen events
     QUEEN_PROPOSAL = "QUEEN_PROPOSAL"
     QUEEN_AUTO_ACTED = "QUEEN_AUTO_ACTED"
