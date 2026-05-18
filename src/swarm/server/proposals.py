@@ -164,16 +164,23 @@ class ProposalManager:
         )
 
     def _notify_proposal(self, proposal: AssignmentProposal) -> None:
-        """Emit push notification for the proposal."""
+        """Emit a push notification only for proposals that are an actual
+        operator-decision surface.
+
+        ESCALATION proposals are the Queen explicitly asking for input:
+        they raise a banner now and become a decision card in the
+        exception queue — notifying is correct. ASSIGNMENT / COMPLETION
+        proposals sit in the autonomous-approval window (the "handled"
+        drawer) for ~180s and may be auto-resolved with no operator
+        action; an interruptive ping on creation is the "notification
+        with an empty Attention panel" bug. If such a proposal survives
+        the window it becomes a decision card and the classifier-derived
+        maybeNotifyAttention pings then — single source of truth.
+        """
         if proposal.proposal_type == ProposalType.ESCALATION:
             self._notification_bus.emit_escalation(
                 proposal.worker_name,
                 f"Queen escalation: {proposal.assessment or proposal.task_title}",
-            )
-        else:
-            self._notification_bus.emit_task_assigned(
-                proposal.worker_name,
-                f"Proposal: {proposal.task_title}",
             )
 
     def _broadcast_modal(self, proposal: AssignmentProposal) -> None:

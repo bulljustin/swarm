@@ -10,6 +10,63 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.18.2] - 2026-05-18
+
+### Features
+
+- **Attention panel → exception queue.** The dashboard Attention panel
+  was the operator's old coordinator feed (every worker→Queen message,
+  every worker idle >15s, recency-sorted, bare Reply/Dismiss). Now that
+  the Queen coordinates the swarm, that feed is mostly already-handled
+  noise. It is rebuilt as an exception queue that surfaces only what is
+  genuinely escalated to a human or a hard failure the autonomous layers
+  can't resolve.
+  - New pure classifier `swarm.server.attention_model.classify()` —
+    snapshot-in, `{critical, decision, handled}`-out, no I/O, fully
+    unit-tested. `routes/attention.py` just gathers live snapshots
+    (threads, pending proposals, worker state, buzz log, blockers,
+    resource pressure) and delegates.
+  - **Suppression filter:** worker-messages (Queen owns them via #235
+    auto-relay), nudged/blocked waiting workers, reviving crashes, and
+    proposals inside the autonomous-approval window drop into a
+    collapsed "the swarm is handling" drawer instead of the queue.
+  - **Severity model:** `Critical` / `Needs your decision` sections,
+    oldest-first within each, plus age-escalation — a decision
+    unresolved past 30m auto-promotes to Critical with a `STALE` marker
+    (fixes "a stale proposal looks like a fresh crash").
+  - **Action-first cards:** each carries a "what's been tried / why
+    it's yours" detail line and type-correct verbs — proposals get
+    inline Approve/Dismiss (reusing existing endpoints), crashes get
+    Revive, waiting workers get Open terminal / Force rest.
+  - **Layout:** the queue fills the top; the "swarm is handling" region
+    is pinned to the bottom third with its own scroll and a sticky
+    collapse toggle.
+
+### Changes
+
+### Fixes
+
+- **Attention no longer claims the Queen is working on an idle thread.**
+  A `worker-message` thread stays `active` until something explicitly
+  resolves it, which the Queen rarely does — she just moves on. The
+  classifier now keeps a worker-message in the drawer only if it is
+  fresh (touched < 10m) **or** the Queen is actively BUZZING; a stale
+  thread with an idle Queen is dropped entirely. Honest reasons
+  ("with the Queen now" / "relayed — awaiting her next turn"), never a
+  false "handling".
+- **Interruptive notifications aligned to the exception queue (single
+  source of truth).** Browser/OS notifications fired on event creation
+  while the panel surfaces on escalation-to-a-human-decision, so a
+  worker hitting a choice menu pinged the operator with an empty
+  Attention panel. `escalation` and `proposal_created` are downgraded
+  to FYI toasts; `escalation_handler.on_escalation` no longer emits a
+  premature desktop notification (the Queen handles it; if she can't it
+  returns as a `queen_escalation` proposal with its own banner +
+  decision card); `proposals._notify_proposal` notifies only for
+  ESCALATION proposals (assignment/completion sit silently in the
+  autonomous window). The classifier-derived `maybeNotifyAttention`
+  remains the one path that pings when something actually needs you.
+
 ## [2026.5.18] - 2026-05-18
 
 ### Features

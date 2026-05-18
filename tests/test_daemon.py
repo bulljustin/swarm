@@ -1807,7 +1807,12 @@ def test_on_escalation_skips_inflight_analysis(daemon):
 
 
 def test_on_escalation_broadcasts_and_emits(daemon):
-    """_on_escalation broadcasts WS and emits notification when no duplicates."""
+    """_on_escalation broadcasts the escalation WS event when no duplicates.
+
+    It no longer emits an interruptive notification here — the Queen
+    handles the escalation, so a ping at this moment would fire with an
+    empty Attention panel (single-source-of-truth alignment).
+    """
     daemon.queen.enabled = False  # Disable Queen so we don't need asyncio loop
 
     daemon._on_escalation(daemon.workers[0], "test reason")

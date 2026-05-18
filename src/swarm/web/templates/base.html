@@ -2336,6 +2336,26 @@
         .cc-attention-card-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
         .cc-attention-reply { display: flex; gap: 0.3rem; margin-top: 0.3rem; }
         .cc-attention-reply input { flex: 1; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 3px; padding: 0.2rem 0.4rem; font-size: 0.75rem; }
+        /* Exception-queue severity grouping */
+        .cc-attention-section { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 0.5rem 0 0.3rem; padding-bottom: 0.15rem; border-bottom: 1px solid var(--border); }
+        .cc-attention-section:first-child { margin-top: 0; }
+        .cc-attention-section.cc-sec-critical { color: var(--poppy); }
+        .cc-attention-section.cc-sec-decision { color: var(--honey); }
+        .cc-attention-card.cc-sev-critical { border-left-color: var(--poppy); }
+        .cc-attention-card.cc-sev-decision { border-left-color: var(--honey); }
+        .cc-attention-card-detail { margin: 0.25rem 0; color: var(--muted); font-size: 0.72rem; line-height: 1.35; max-height: 4.2em; overflow: hidden; }
+        /* Split layout: exception queue (top) + pinned "Queen is handling"
+           region anchored to the bottom third of the panel. */
+        #cc-attention-list { display: flex; flex-direction: column; overflow: hidden; }
+        .cc-exception-scroll { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+        .cc-handled-region { flex: 0 0 auto; max-height: 33%; overflow-y: auto; margin-top: 0.4rem; border-top: 1px dashed var(--border); }
+        .cc-handled-toggle { position: sticky; top: 0; z-index: 1; background: var(--bg-soft, rgba(40,30,20,0.96)); padding: 0.35rem 0.4rem; color: var(--muted); font-size: 0.72rem; cursor: pointer; user-select: none; }
+        .cc-handled-toggle:hover { color: var(--fg); }
+        .cc-handled-toggle .cc-handled-arrow { display: inline-block; width: 1em; }
+        .cc-handled-list { padding-bottom: 0.2rem; }
+        .cc-handled-row { display: flex; justify-content: space-between; gap: 0.5rem; padding: 0.2rem 0.4rem; font-size: 0.7rem; color: var(--muted); border-left: 2px solid var(--border); }
+        .cc-handled-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+        .cc-handled-reason { flex: 0 0 auto; font-style: italic; opacity: 0.8; }
         .cc-event-row { padding: 0.25rem 0.3rem; border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,0.05)); display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.75rem; cursor: pointer; }
         .cc-event-row:hover { background: rgba(255,255,255,0.03); }
         .cc-event-time { color: var(--muted); font-size: 0.65rem; min-width: 3.5em; }
@@ -2359,6 +2379,7 @@
         .cc-ask-queen-body { display: flex; flex-direction: column; min-height: 0; height: 100%; }
         /* Her live PTY mounts here (reuses .inline-terminal-container). */
         .cc-queen-term-holder { flex: 1 1 auto; min-height: 60px; min-width: 0; display: flex; }
+        .cc-queen-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 0.3rem; padding-top: 0.4rem; margin-top: 0.4rem; border-top: 1px solid rgba(255,255,255,0.08); }
         @media (max-width: 900px) {
             .command-center-grid {
                 grid-template-columns: 1fr;

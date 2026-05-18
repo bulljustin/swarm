@@ -58,7 +58,15 @@ class EscalationHandler:
             _log.debug("skipping escalation for %s — analysis already in flight", worker.name)
             return
 
-        self._notification_bus.emit_escalation(worker.name, reason)
+        # No interruptive notification here — this fires the moment a
+        # worker escalates, but the Queen is about to handle it (analysis
+        # triggered below) so it lands in the exception queue's "handled"
+        # drawer, not as an operator action item. Notifying here is the
+        # "ping with an empty Attention panel" bug. If the Queen can't
+        # resolve it she raises a queen_escalation proposal, which has its
+        # own banner + becomes a decision card (and notifies there). The
+        # WS broadcast stays — the dashboard shows a non-interruptive FYI
+        # toast and refreshes the worker/buzz views.
         self._broadcast_ws(
             {
                 "type": "escalation",

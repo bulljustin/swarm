@@ -526,8 +526,11 @@
                 refreshStatus();
                 break;
             case 'escalation':
-                showToast(data.worker + ' escalated: ' + data.reason, true, BEE.surprised);
-                notifyBrowser('Escalation', data.worker + ': ' + data.reason);
+                // FYI toast only — the Queen handles escalations. An
+                // interruptive notification fires only if this actually
+                // reaches the exception queue (maybeNotifyAttention, which
+                // is classifier-derived). Single source of truth.
+                showToast(data.worker + ' escalated: ' + data.reason, false, BEE.surprised);
                 refreshWorkers();
                 refreshBuzzLog();
                 break;
@@ -553,8 +556,11 @@
                 refreshPipelines();
                 break;
             case 'proposal_created':
+                // FYI toast only — a fresh proposal sits in the autonomous
+                // window (handled drawer) for ~180s. If it isn't auto-
+                // resolved it becomes a decision card and maybeNotifyAttention
+                // pings then. No premature interruptive notification.
                 showToast('Queen proposes: ' + (data.proposal ? data.proposal.task_title : 'new assignment'), false, BEE.queen);
-                notifyBrowser('Queen Proposal', data.proposal ? data.proposal.worker_name + ' ← ' + data.proposal.task_title : 'New assignment proposal', true);
                 refreshProposals();
                 // Flash the Decisions badge so users notice even if not on that tab
                 switchTab('decisions');
@@ -8869,18 +8875,60 @@
     }, true);
 
     // ----- Attention queue ------------------------------------------------
+    var ccHandledOpen = false;
+
     function loadAttention() {
         return fetchJSON('/api/attention').then(function (r) {
-            renderAttention(r.threads || []);
+            renderAttention(r || {});
         }).catch(function () {});
     }
 
-    function renderAttention(threads) {
+    // Build one exception card. Buttons are driven by item.actions tokens
+    // so the backend decides which verbs are valid per exception type.
+    function ccCard(item) {
+        var ago = fmtAgo(item.updated_at);
+        var ref = escapeHtml(item.ref_id || '');
+        var worker = escapeHtml(item.worker_name || '');
+        var sev = escapeHtml(item.severity || 'decision');
+        var hasReply = (item.actions || []).indexOf('reply') >= 0;
+        var btns = (item.actions || []).map(function (a) {
+            if (a === 'reply') return '<button class="btn btn-sm" data-action="ccReplyStart" data-thread-id="' + ref + '">Reply</button>';
+            if (a === 'dismiss') return '<button class="btn btn-sm btn-secondary" data-action="ccDismissAttention" data-thread-id="' + ref + '">Dismiss</button>';
+            if (a === 'focus') return '<button class="btn btn-sm btn-secondary" data-action="ccFocusLive" data-worker="' + worker + '">Open terminal</button>';
+            if (a === 'revive') return '<button class="btn btn-sm" data-action="ccRevive" data-worker="' + worker + '">Revive</button>';
+            if (a === 'force_rest') return '<button class="btn btn-sm btn-secondary" data-action="ccForceRest" data-worker="' + worker + '">Force rest</button>';
+            if (a === 'approve') return '<button class="btn btn-sm" data-action="ccApproveProposal" data-proposal-id="' + ref + '">Approve</button>';
+            if (a === 'reject') return '<button class="btn btn-sm btn-danger" data-action="ccRejectProposal" data-proposal-id="' + ref + '">Dismiss</button>';
+            if (a === 'resources') return '<button class="btn btn-sm btn-secondary" data-action="ccGotoResources">View resources</button>';
+            return '';
+        }).join('');
+        var replyBox = hasReply
+            ? '<div class="cc-attention-reply" data-reply-for="' + ref + '" style="display:none">'
+                + '<input type="text" placeholder="Reply to ' + (worker || 'worker') + '..." data-cc-reply-input="' + ref + '">'
+                + '<button class="btn btn-sm" data-action="ccReplySendBtn" data-thread-id="' + ref + '">Send</button>'
+                + '</div>'
+            : '';
+        return '<div class="cc-attention-card cc-sev-' + sev + ' cc-kind-' + escapeHtml(item.kind) + '" data-thread-id="' + ref + '">'
+            + '<div class="cc-attention-card-head">'
+            + '<span class="cc-attention-card-title">' + escapeHtml(item.title || '(no title)') + '</span>'
+            + '<span class="cc-attention-card-meta">' + (worker || escapeHtml(item.kind)) + ' · ' + ago + '</span>'
+            + '</div>'
+            + (item.detail ? '<div class="cc-attention-card-detail">' + escapeHtml(item.detail) + '</div>' : '')
+            + '<div class="cc-attention-card-actions">' + btns + '</div>'
+            + replyBox
+            + '</div>';
+    }
+
+    function renderAttention(data) {
         var list = el('cc-attention-list');
         var badge = el('cc-attention-count');
+        var crit = (data && data.critical) || [];
+        var dec = (data && data.decision) || [];
+        var handled = (data && data.handled) || { count: 0, items: [] };
+        var actionable = crit.length + dec.length;
         if (badge) {
-            badge.textContent = threads.length ? String(threads.length) : '';
-            badge.setAttribute('data-count', String(threads.length));
+            badge.textContent = actionable ? String(actionable) : '';
+            badge.setAttribute('data-count', String(actionable));
         }
         if (!list) return;
         // Preserve in-progress operator state: if any reply box is open
@@ -8888,49 +8936,52 @@
         // re-render so we don't wipe the input. The next poll cycle
         // will catch up after the operator submits or dismisses.
         if (isAttentionBusy(list)) return;
-        if (!threads.length) {
-            list.innerHTML = '<div class="cc-empty">No items needing attention</div>';
-            return;
+        // Top: the exception queue (scrolls). Bottom: a pinned region for
+        // what the Queen is already addressing — anchored to the bottom
+        // third so an empty queue doesn't leave a big void above it.
+        var queue = '';
+        if (crit.length) {
+            queue += '<div class="cc-attention-section cc-sec-critical">Critical</div>'
+                + crit.map(ccCard).join('');
         }
-        list.innerHTML = threads.map(function (t) {
-            var ago = fmtAgo(t.updated_at);
-            var tid = escapeHtml(t.id);
-            var worker = escapeHtml(t.worker_name || '');
-            if (t.synthetic) {
-                return '<div class="cc-attention-card cc-kind-' + escapeHtml(t.kind) + ' cc-synthetic" data-worker="' + worker + '">'
-                    + '<div class="cc-attention-card-head">'
-                    + '<span class="cc-attention-card-title">' + escapeHtml(t.title || '(no title)') + '</span>'
-                    + '<span class="cc-attention-card-meta">' + worker + ' · ' + ago + '</span>'
-                    + '</div>'
-                    + '<div class="cc-attention-card-actions">'
-                    + '<button class="btn btn-sm" data-action="ccFocusLive" data-worker="' + worker + '">Open terminal</button>'
-                    + (t.kind === 'worker-stung'
-                        ? '<button class="btn btn-sm btn-secondary" data-action="ccRevive" data-worker="' + worker + '">Revive</button>'
-                        : '<button class="btn btn-sm btn-secondary" data-action="ccForceRest" data-worker="' + worker + '">Force rest</button>')
-                    + '</div>'
-                    + '</div>';
-            }
-            return '<div class="cc-attention-card cc-kind-' + escapeHtml(t.kind) + '" data-thread-id="' + tid + '">'
-                + '<div class="cc-attention-card-head">'
-                + '<span class="cc-attention-card-title">' + escapeHtml(t.title || '(no title)') + '</span>'
-                + '<span class="cc-attention-card-meta">' + escapeHtml(t.worker_name || t.kind) + ' · ' + ago + '</span>'
+        if (dec.length) {
+            queue += '<div class="cc-attention-section cc-sec-decision">Needs your decision</div>'
+                + dec.map(ccCard).join('');
+        }
+        if (!queue) queue = '<div class="cc-empty">Nothing needs you — the swarm is running clean</div>';
+        var html = '<div class="cc-exception-scroll">' + queue + '</div>';
+        if (handled.count) {
+            html += '<div class="cc-handled-region">'
+                + '<div class="cc-handled-toggle' + (ccHandledOpen ? ' open' : '') + '" data-action="ccToggleHandled">'
+                + '<span class="cc-handled-arrow">' + (ccHandledOpen ? '▾' : '▸') + '</span> '
+                + handled.count + ' item' + (handled.count === 1 ? '' : 's') + ' the swarm is handling'
                 + '</div>'
-                + '<div class="cc-attention-card-actions">'
-                + '<button class="btn btn-sm" data-action="ccReplyStart" data-thread-id="' + tid + '">Reply</button>'
-                + '<button class="btn btn-sm btn-secondary" data-action="ccDismissAttention" data-thread-id="' + tid + '">Dismiss</button>'
-                + '</div>'
-                + '<div class="cc-attention-reply" data-reply-for="' + tid + '" style="display:none">'
-                + '<input type="text" placeholder="Reply to ' + escapeHtml(t.worker_name || 'worker') + '..." data-cc-reply-input="' + tid + '">'
-                + '<button class="btn btn-sm" data-action="ccReplySendBtn" data-thread-id="' + tid + '">Send</button>'
+                + '<div class="cc-handled-list" style="display:' + (ccHandledOpen ? 'block' : 'none') + '">'
+                + (handled.items || []).map(function (h) {
+                    return '<div class="cc-handled-row">'
+                        + '<span class="cc-handled-title">' + escapeHtml(h.title || '') + '</span>'
+                        + '<span class="cc-handled-reason">' + escapeHtml(h.reason || '') + '</span>'
+                        + '</div>';
+                }).join('')
                 + '</div>'
                 + '</div>';
-        }).join('');
+        }
+        list.innerHTML = html;
     }
 
     function isAttentionBusy(list) {
         if (!list) return false;
-        // Focus inside the attention list = operator is typing somewhere.
-        if (document.activeElement && list.contains(document.activeElement)) return true;
+        // Operator actively typing in a reply field = don't wipe it.
+        // Only a focused text input/textarea counts — a focused action
+        // button (e.g. the Dismiss the operator just clicked, which is
+        // inside this list) is NOT "busy" and must not suppress the
+        // re-render, or dismissed cards never disappear until a manual
+        // page refresh.
+        var ae = document.activeElement;
+        if (ae && list.contains(ae)) {
+            var tag = (ae.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || ae.isContentEditable) return true;
+        }
         // Any visible reply box = operator started composing a reply.
         var openReplies = list.querySelectorAll('.cc-attention-reply');
         for (var i = 0; i < openReplies.length; i++) {
@@ -9167,6 +9218,77 @@
         }).catch(function () {});
     }
 
+    // Proposals are consolidated into the exception queue. Reuse the
+    // existing global approve/reject (form-POST + toast + refresh), then
+    // re-poll attention so the resolved card clears.
+    function ccApproveProposal(target) {
+        var id = target && target.dataset && target.dataset.proposalId;
+        if (!id) return;
+        if (window.approveProposal) window.approveProposal(id);
+        setTimeout(loadAttention, 600);
+    }
+
+    function ccRejectProposal(target) {
+        var id = target && target.dataset && target.dataset.proposalId;
+        if (!id) return;
+        if (window.rejectProposal) window.rejectProposal(id);
+        setTimeout(loadAttention, 600);
+    }
+
+    // Collapsed "Queen is handling" drawer. Toggle DOM directly (don't
+    // re-fetch) and remember the open state across the 15s re-render.
+    function ccToggleHandled() {
+        ccHandledOpen = !ccHandledOpen;
+        var list = el('cc-attention-list');
+        if (!list) return;
+        var drawer = list.querySelector('.cc-handled-list');
+        var toggle = list.querySelector('.cc-handled-toggle');
+        if (drawer) drawer.style.display = ccHandledOpen ? 'block' : 'none';
+        if (toggle) {
+            toggle.classList.toggle('open', ccHandledOpen);
+            var arrow = toggle.querySelector('.cc-handled-arrow');
+            if (arrow) arrow.textContent = ccHandledOpen ? '▾' : '▸';
+        }
+    }
+
+    function ccGotoResources() {
+        if (window.showToast) window.showToast('System under pressure — see the Resources panel');
+    }
+
+    // Queen-bottom action strip. The worker toolbar's doAction path keys
+    // off the selectedWorker/activeTermWorker globals, and the embedded
+    // Queen is deliberately neither — so these reuse the explicit-name
+    // cc* pattern (ccPost + the literal worker name "queen", which every
+    // backend verb already accepts since the Queen is a registered
+    // worker). Two data-driven handlers cover send-a-line and run-a-verb
+    // so we don't grow one function per button.
+    function ccQueenSend(target) {
+        var msg = target && target.dataset && target.dataset.qmsg;
+        if (!msg) return;
+        ccPost('/api/workers/queen/send', { message: msg }).then(function (r) {
+            if (!r.ok && window.showToast) window.showToast('Queen send failed (' + r.status + ')', true);
+        }).catch(function () {});
+    }
+
+    function ccQueenVerb(target) {
+        var verb = target && target.dataset && target.dataset.qverb;
+        if (!verb) return;
+        if (verb === 'kill' && !window.confirm('Kill the Queen process? She can be revived.')) return;
+        ccPost('/api/workers/queen/' + encodeURIComponent(verb), {}).then(function (r) {
+            if (!r.ok && window.showToast) window.showToast('Queen ' + verb + ' failed (' + r.status + ')', true);
+            else if (window.showToast) window.showToast('Queen: ' + verb);
+        }).catch(function () {});
+    }
+
+    // Refresh = re-mount + reconnect her embedded socket. NOT
+    // hardReconnectTermEntry — that re-attaches into the detail pane and
+    // would tear the embed out of #cc-queen-term-holder. mountQueenEmbed
+    // is the embed-safe reconnect (it re-appends to the holder and calls
+    // connectTermEntryWs internally).
+    function ccQueenRefresh() {
+        try { if (window.mountQueenEmbed) window.mountQueenEmbed(); } catch (_) {}
+    }
+
     var CC_HANDLERS = {
         ccReplyStart: ccReplyStart,
         ccReplySendBtn: ccReplySendBtn,
@@ -9176,6 +9298,13 @@
         ccFocusLive: ccFocusLive,
         ccForceRest: ccForceRest,
         ccRevive: ccRevive,
+        ccApproveProposal: ccApproveProposal,
+        ccRejectProposal: ccRejectProposal,
+        ccToggleHandled: ccToggleHandled,
+        ccGotoResources: ccGotoResources,
+        ccQueenSend: ccQueenSend,
+        ccQueenVerb: ccQueenVerb,
+        ccQueenRefresh: ccQueenRefresh,
     };
 
     document.addEventListener('click', function (e) {

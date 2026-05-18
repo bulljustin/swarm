@@ -1,16 +1,11 @@
 """Attention queue routes — the operator's must-act surface.
 
-The Attention queue is a filtered view over ``queen_threads`` covering the
-kinds the operator needs to act on:
-
-* ``worker-message`` — a worker sent a message to ``to="queen"`` (mailbox)
-* ``queen-escalation`` — headless Queen explicitly flagged operator review
-* ``escalation`` / ``oversight`` / ``proposal`` / ``anomaly`` — drone-driven
-  escalations from the existing thread producers
-
-``operator`` threads (the Ask Queen panel — operator-initiated conversations
-with the interactive Queen) are **not** in the Attention queue — they're
-conversations, not items that need attention.
+The Attention queue is an **exception queue**: it surfaces only what is
+genuinely escalated to a human or a hard failure the autonomous layers
+can't resolve, ranked by urgency. Everything the Queen/drones are actively
+handling is demoted to a collapsed "Queen is handling" drawer. The
+classification policy is a pure function in :mod:`swarm.server.attention_model`;
+this route just gathers live snapshots and delegates to it.
 
 The ``reply`` verb is what makes Attention distinct from the existing
 ``queen.thread`` routes: it (a) appends an operator message to the thread,
@@ -24,19 +19,16 @@ from __future__ import annotations
 from aiohttp import web
 
 from swarm.logging import get_logger
+from swarm.server import attention_model
 from swarm.server.helpers import get_daemon, handle_errors, json_error
 from swarm.server.routes.queen import _broadcast_message, _broadcast_thread
 
 _log = get_logger("server.routes.attention")
 
-ATTENTION_KINDS = (
-    "worker-message",
-    "queen-escalation",
-    "escalation",
-    "oversight",
-    "proposal",
-    "anomaly",
-)
+# Window for counting REVIVED entries when deciding crash-loop severity.
+_CRASH_LOOP_WINDOW = 600.0
+# Threads whose latest message is worth showing as card detail.
+_DETAIL_KINDS = attention_model._QUEEN_REVIEW_KINDS
 
 _MAX_BODY_LEN = 8000
 
@@ -49,65 +41,164 @@ def register(app: web.Application) -> None:
 
 @handle_errors
 async def handle_list_attention(request: web.Request) -> web.Response:
-    """Return Attention items: real queen_threads + synthetic per-worker
-    entries for workers currently waiting on operator input or crashed.
+    """Return the exception queue: ``{critical, decision, handled}``.
 
-    Synthetic items have ``synthetic: true`` and an id like ``worker:<name>``
-    so the frontend can render appropriate actions (Focus worker, Force to
-    rest) instead of the thread-based Reply/Dismiss verbs.
+    Gathers live snapshots (threads, pending proposals, worker state, the
+    autonomous-layer's recent actions from the buzz log, blockers, resource
+    pressure) and delegates the policy to
+    :func:`swarm.server.attention_model.classify`.
     """
     import time
-
-    from swarm.worker.worker import QUEEN_WORKER_NAME, WorkerState
 
     d = get_daemon(request)
     try:
         limit = min(int(request.query.get("limit", "100")), 500)
     except ValueError:
         limit = 100
-    payload: list[dict] = []
-    chat = getattr(d, "queen_chat", None)
-    if chat is not None:
-        threads = chat.list_threads(status="active", limit=limit)
-        payload.extend(t.to_dict() for t in threads if t.kind in ATTENTION_KINDS)
 
-    # Synthetic: workers currently waiting on operator input or crashed.
-    # These are operator-action items even though no queen_thread was
-    # opened for them.
-    workers = getattr(d, "workers", [])
-    for w in workers:
+    now = time.time()
+    cfg = attention_model.AttentionConfig()
+    chat = getattr(d, "queen_chat", None)
+    buzz = getattr(getattr(d, "drone_log", None), "_buzz_store", None)
+
+    view = attention_model.classify(
+        threads=_gather_threads(chat, limit),
+        proposals=_gather_proposals(d),
+        workers=_gather_workers(d, buzz, now),
+        nudged_workers=_gather_nudged(buzz, now, cfg),
+        blocked_workers=_gather_blocked(d),
+        resource_snapshot=getattr(getattr(d, "resource_mon", None), "snapshot", None),
+        now=now,
+        queen_busy=_queen_busy(d),
+        cfg=cfg,
+    )
+    return web.json_response(view.to_dict())
+
+
+def _queen_busy(d: object) -> bool:
+    """True only when the Queen worker is actively processing. An idle
+    Queen cannot be 'currently working on' a relayed message."""
+    from swarm.worker.worker import QUEEN_WORKER_NAME
+
+    for w in getattr(d, "workers", []):
+        if w.name == QUEEN_WORKER_NAME:
+            return w.state.value == "BUZZING"
+    return False
+
+
+def _gather_threads(chat: object, limit: int) -> list[attention_model.ThreadSnap]:
+    if chat is None:
+        return []
+    out: list[attention_model.ThreadSnap] = []
+    for t in chat.list_threads(status="active", limit=limit):
+        if t.kind == "operator":
+            continue
+        latest: str | None = None
+        if t.kind in _DETAIL_KINDS:
+            try:
+                msgs = chat.list_messages(t.id, limit=500)
+                latest = msgs[-1].content if msgs else None
+            except Exception:
+                _log.debug("attention: list_messages(%s) failed", t.id, exc_info=True)
+        out.append(
+            attention_model.ThreadSnap(
+                id=t.id,
+                kind=t.kind,
+                title=t.title or "",
+                worker_name=t.worker_name,
+                task_id=t.task_id,
+                created_at=t.created_at,
+                updated_at=t.updated_at,
+                latest_message=latest,
+            )
+        )
+    return out
+
+
+def _gather_proposals(d: object) -> list[attention_model.ProposalSnap]:
+    store = getattr(d, "proposal_store", None)
+    if store is None:
+        return []
+    out: list[attention_model.ProposalSnap] = []
+    for p in store.pending:
+        ptype = getattr(p.proposal_type, "value", str(p.proposal_type))
+        out.append(
+            attention_model.ProposalSnap(
+                id=p.id,
+                proposal_type=ptype,
+                worker_name=p.worker_name,
+                task_id=p.task_id or None,
+                task_title=p.task_title or "",
+                reasoning=p.reasoning or "",
+                assessment=p.assessment or "",
+                confidence=float(p.confidence or 0.0),
+                is_plan=bool(p.is_plan),
+                created_at=p.created_at,
+            )
+        )
+    return out
+
+
+def _gather_workers(d: object, buzz: object, now: float) -> list[attention_model.WorkerSnap]:
+    from swarm.worker.worker import QUEEN_WORKER_NAME
+
+    pilot = getattr(d, "pilot", None)
+    waiting = getattr(pilot, "_waiting_content", {}) or {}
+    out: list[attention_model.WorkerSnap] = []
+    for w in getattr(d, "workers", []):
         if w.name == QUEEN_WORKER_NAME:
             continue
-        if getattr(w, "needs_operator_input", False):
-            payload.append(
-                {
-                    "id": f"worker:{w.name}",
-                    "title": f"{w.name} is waiting for your input",
-                    "kind": "worker-waiting",
-                    "worker_name": w.name,
-                    "task_id": None,
-                    "created_at": getattr(w, "state_since", time.time()),
-                    "updated_at": getattr(w, "state_since", time.time()),
-                    "synthetic": True,
-                }
+        state = w.state.value
+        revive_at = getattr(w, "_revive_at", 0.0)
+        grace = getattr(w, "revive_grace", 15.0)
+        in_grace = revive_at > 0 and (now - revive_at) < grace
+        revive_count = 0
+        last_stung: str | None = None
+        if state == "STUNG" and buzz is not None:
+            revive_count = buzz.count(
+                worker_name=w.name, action="REVIVED", since=now - _CRASH_LOOP_WINDOW
             )
-        elif w.state == WorkerState.STUNG:
-            payload.append(
-                {
-                    "id": f"worker:{w.name}",
-                    "title": f"{w.name} crashed — needs revive",
-                    "kind": "worker-stung",
-                    "worker_name": w.name,
-                    "task_id": None,
-                    "created_at": getattr(w, "state_since", time.time()),
-                    "updated_at": getattr(w, "state_since", time.time()),
-                    "synthetic": True,
-                }
+            rows = buzz.query(worker_name=w.name, action="WORKER_STUNG", since=now - 3600, limit=1)
+            last_stung = rows[0].get("detail") if rows else None
+        out.append(
+            attention_model.WorkerSnap(
+                name=w.name,
+                state=state,
+                state_duration=w.state_duration,
+                needs_operator_input=bool(getattr(w, "needs_operator_input", False)),
+                in_revive_grace=in_grace,
+                task_id=None,
+                waiting_excerpt=waiting.get(w.name) or None,
+                revive_count=revive_count,
+                last_stung_detail=last_stung,
             )
+        )
+    return out
 
-    # Most-recently-updated first; ties broken alphabetically.
-    payload.sort(key=lambda x: (-(x.get("updated_at") or 0), x.get("title") or ""))
-    return web.json_response({"threads": payload})
+
+def _gather_nudged(buzz: object, now: float, cfg: attention_model.AttentionConfig) -> set[str]:
+    if buzz is None:
+        return set()
+    try:
+        rows = buzz.query(action="AUTO_NUDGE", since=now - cfg.nudge_window_seconds, limit=1000)
+    except Exception:
+        _log.debug("attention: AUTO_NUDGE query failed", exc_info=True)
+        return set()
+    return {r.get("worker_name") for r in rows if r.get("worker_name")}
+
+
+def _gather_blocked(d: object) -> set[str]:
+    store = getattr(d, "blocker_store", None)
+    if store is None:
+        return set()
+    blocked: set[str] = set()
+    for w in getattr(d, "workers", []):
+        try:
+            if store.list_for_worker(w.name):
+                blocked.add(w.name)
+        except Exception:
+            _log.debug("attention: list_for_worker(%s) failed", w.name, exc_info=True)
+    return blocked
 
 
 @handle_errors
