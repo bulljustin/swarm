@@ -10,6 +10,60 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.20.9] - 2026-05-20
+
+### Features
+
+- **Cleanup batch — follow-up to the P1–P6 UX overhaul series.** Closes
+  the four gaps named in earlier commits' "deferred" sections, plus
+  the unrelated test_ws_auth flake that bit three full-suite runs.
+  Spec at `docs/specs/post-overhaul-cleanup.md`. New tests + lint
+  clean; full suite 4421 passing (up from 4406).
+  - **Linked-task-by-ID.** New `GET /api/tasks/{task_id}` returning
+    the rich task dict (every field the editor reads, not just the
+    7-field list-view summary). New `showTaskEditorById(id)` helper
+    in `dashboard.js` fetches that endpoint and feeds the existing
+    `openTaskModal('edit', data)`. P3's pipeline-step task chip now
+    actually opens the editor instead of falling back to
+    scroll-and-flash. The scroll-and-flash code stays as a defensive
+    fallback if the fetch 404s.
+  - **PlaybookConfig range validation.** New `_validate_playbook_ranges`
+    mirroring `_validate_drone_ranges`. Rejects winrate / similarity
+    values outside `[0.0, 1.0]`, `auto_promote_uses` / `prune_min_uses`
+    below 1, negative `min_resolution_chars` / `max_synth_per_hour`,
+    and `consolidation_interval_seconds` below the engine's 300s
+    floor. Dashboard sliders prevent the common case but the REST
+    endpoint is publicly addressable so this is the only gate
+    against a direct bad POST. Errors raise `ValueError` → 400 with
+    explicit `playbooks.X must be …` messages.
+  - **Retry-on-COMPLETED with confirmation modal.** Operator who
+    really needs to re-run a COMPLETED step can now do so —
+    `engine.retry_step` gains a `confirmed=False` kwarg; without
+    it the engine still rejects non-FAILED (back-compat preserved).
+    Route accepts `{"confirmed": true}` body and threads it through.
+    A new modal in the P3 detail view gates the action behind a
+    required checkbox + explicit warning about side effects
+    (shell commands re-execute, webhooks re-fire, agent tasks
+    re-create). FAILED retry still skips the modal. Cascade
+    behaviour is unchanged: only FAILED downstream descendants
+    reset, even on a confirmed COMPLETED retry — re-firing a
+    whole completed subtree is a separate decision we deliberately
+    deferred. The detail view's per-step button is `⚠ Retry`
+    (amber) for COMPLETED to visually distinguish from FAILED retry.
+  - **test_ws_auth flake fixed.** The 30s pytest-timeout was
+    catching `selector.poll` during pytest-asyncio's event-loop
+    teardown — but the timed body did nothing async itself. Root
+    cause: imports were inside each test function (`from
+    swarm.server.api import _RATE_LIMIT_WINDOW`), so the first
+    test in the file paid the full `swarm.server.api` import cost
+    while the timeout was already counting. Hoisting the imports
+    to module level moves the work into collection. Was a
+    pre-existing flake that hit three earlier full-suite runs.
+
+### Changes
+
+### Fixes
+
 ## [2026.5.20.8] - 2026-05-20
 
 ### Features

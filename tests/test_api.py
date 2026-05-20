@@ -513,6 +513,55 @@ async def test_create_task_invalid_title(client):
 
 
 @pytest.mark.asyncio
+async def test_get_task_by_id_returns_full_dict(client):
+    """Cleanup batch: GET /api/tasks/{id} powers the dashboard's
+    showTaskEditorById helper. Must return the rich dict shape (tags,
+    depends_on, attachments, status, priority, ...) — not just the
+    7-field list-view summary."""
+    resp = await client.post(
+        "/api/tasks",
+        json={"title": "deeplink", "priority": "high"},
+        headers=_API_HEADERS,
+    )
+    data = await resp.json()
+    task_id = data["id"]
+
+    resp = await client.get(f"/api/tasks/{task_id}")
+    assert resp.status == 200
+    full = await resp.json()
+    assert full["id"] == task_id
+    assert full["title"] == "deeplink"
+    assert full["priority"] == "high"
+    # Rich-dict shape — fields the editor needs that the list-view
+    # summary doesn't carry. Values may be empty/default but the keys
+    # must exist so the JS opener can read them safely.
+    for key in (
+        "depends_on",
+        "tags",
+        "attachments",
+        "resolution",
+        "block_reason",
+        "is_cross_project",
+        "source_worker",
+        "target_worker",
+        "dependency_type",
+        "acceptance_criteria",
+        "context_refs",
+        "assigned_worker",
+        "status",
+        "task_type",
+        "number",
+    ):
+        assert key in full, f"missing {key!r} in task-by-id response"
+
+
+@pytest.mark.asyncio
+async def test_get_task_by_id_returns_404_for_unknown(client):
+    resp = await client.get("/api/tasks/this-id-does-not-exist")
+    assert resp.status == 404
+
+
+@pytest.mark.asyncio
 async def test_create_task_title_too_long(client):
     long_title = "x" * 501
     resp = await client.post("/api/tasks", json={"title": long_title}, headers=_API_HEADERS)

@@ -310,12 +310,24 @@ async def handle_retry_step(request: web.Request) -> web.Response:
       * step is not in FAILED state → 409 (operator can't retry a step
         that isn't currently failed; we surface this rather than
         silently no-op'ing so the UI can show a useful message)
+
+    Cleanup batch follow-up: a ``{"confirmed": true}`` body extends the
+    eligibility to COMPLETED steps. Without the flag, retrying a
+    completed step still 409s — the UI gates this behind a confirmation
+    modal that explains the side-effect risk.
     """
     engine = _get_engine(request)
     pipeline_id = request.match_info["pipeline_id"]
     step_id = request.match_info["step_id"]
+    body: dict[str, object] = {}
+    if request.can_read_body:
+        try:
+            body = await request.json()
+        except (ValueError, TypeError):
+            body = {}
+    confirmed = bool(body.get("confirmed", False))
     try:
-        reset_ids = engine.retry_step(pipeline_id, step_id)
+        reset_ids = engine.retry_step(pipeline_id, step_id, confirmed=confirmed)
     except ValueError as e:
         message = str(e)
         if "not found" in message:

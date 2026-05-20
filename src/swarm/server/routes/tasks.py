@@ -45,6 +45,10 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/tasks/{task_id}/retry-draft", handle_retry_draft)
     app.router.add_get("/api/tasks/history", handle_search_task_history)
     app.router.add_get("/api/tasks/{task_id}/history", handle_task_history)
+    # GET by id — cleanup batch follow-up. Must be registered AFTER the
+    # static-path GETs (/export, /history) because aiohttp dispatches in
+    # registration order and `{task_id}` would otherwise eat them.
+    app.router.add_get("/api/tasks/{task_id}", handle_get_task)
 
 
 def _validate_priority(raw: str) -> TaskPriority:
@@ -90,6 +94,60 @@ def _task_dict(t) -> dict[str, object]:
         "task_type": t.task_type.value,
         "assigned_worker": t.assigned_worker,
     }
+
+
+def _task_full_dict(t) -> dict[str, object]:
+    """Full task dict for the editor — every field the modal reads.
+
+    Cleanup batch follow-up to the P1-P6 series: the dashboard's task
+    editor takes a dict with 17 known keys (see `showEditTask`). The
+    list-view `_task_dict` only carries the 7 columns the table needs,
+    so a deep-link by ID couldn't open the editor — hence this richer
+    serializer. Field names match the editor's expected shape exactly
+    so the client doesn't have to re-map.
+    """
+    return {
+        "id": t.id,
+        "number": t.number,
+        "title": t.title,
+        "description": t.description,
+        "status": t.status.value,
+        "priority": t.priority.value,
+        "task_type": t.task_type.value,
+        "assigned_worker": t.assigned_worker or "",
+        "tags": list(t.tags),
+        "depends_on": list(t.depends_on),
+        "attachments": list(t.attachments),
+        "resolution": t.resolution,
+        "block_reason": t.block_reason,
+        "is_cross_project": t.is_cross_project,
+        "source_worker": t.source_worker,
+        "target_worker": t.target_worker,
+        "dependency_type": t.dependency_type,
+        "acceptance_criteria": list(t.acceptance_criteria),
+        "context_refs": list(t.context_refs),
+        "jira_key": t.jira_key,
+        "source_email_id": t.source_email_id,
+        "verification_status": t.verification_status.value,
+        "verification_reason": t.verification_reason,
+    }
+
+
+@handle_errors
+async def handle_get_task(request: web.Request) -> web.Response:
+    """Return a single task by id (cleanup batch follow-up).
+
+    Backs the dashboard's `showTaskEditorById(id)` so deep-links (the
+    P3 pipeline-step task chip, future notifications, queen relays)
+    can open the editor without already having the full task data in
+    hand. 404 if the id doesn't match any task.
+    """
+    d = get_daemon(request)
+    task_id = request.match_info["task_id"]
+    task = d.task_board.get(task_id)
+    if task is None:
+        return json_error(f"task {task_id!r} not found", 404)
+    return web.json_response(_task_full_dict(task))
 
 
 @handle_errors

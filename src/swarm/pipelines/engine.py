@@ -267,7 +267,36 @@ class PipelineEngine(EventEmitter):
         self.emit("change")
         return newly_ready
 
-    def retry_step(self, pipeline_id: str, step_id: str) -> list[str]:
+    @staticmethod
+    def _assert_retry_eligible(step: PipelineStep, *, confirmed: bool) -> None:
+        """Raise ValueError unless ``step`` can be retried.
+
+        FAILED is always eligible. COMPLETED is eligible only when the
+        caller has opted in via ``confirmed=True`` (re-running a
+        completed step may double-fire side effects). PENDING / READY /
+        IN_PROGRESS / SKIPPED are never eligible.
+        """
+        if step.status == StepStatus.FAILED:
+            return
+        if step.status == StepStatus.COMPLETED:
+            if confirmed:
+                return
+            raise ValueError(
+                f"Step {step.id} is completed — retry requires explicit "
+                "confirmation because re-running may produce side effects"
+            )
+        raise ValueError(
+            f"Step {step.id} is {step.status.value} — "
+            "retry only resets FAILED (or COMPLETED with confirmation) steps"
+        )
+
+    def retry_step(
+        self,
+        pipeline_id: str,
+        step_id: str,
+        *,
+        confirmed: bool = False,
+    ) -> list[str]:
         """Reset a FAILED step plus its FAILED downstream descendants.
 
         P3 of the editor-UX series. Returns the list of step IDs that were
@@ -276,7 +305,13 @@ class PipelineEngine(EventEmitter):
         are left alone — SKIPPED is sticky operator intent and re-running
         a COMPLETED side-effecting step would double-fire it.
 
-        Raises ``ValueError`` for not-found and for non-FAILED targets;
+        Cleanup batch follow-up: ``confirmed=True`` extends the target
+        rule to also accept COMPLETED steps. The cascade behaviour stays
+        the same (only FAILED downstream resets) — re-running a completed
+        step doesn't implicitly mean re-running everything below it.
+        That's the conservative default; flip it if a use case shows up.
+
+        Raises ``ValueError`` for not-found and for non-eligible targets;
         the route handler maps those to 404 / 409 respectively.
         """
         pipeline = self._pipelines.get(pipeline_id)
@@ -285,10 +320,7 @@ class PipelineEngine(EventEmitter):
         step = pipeline.get_step(step_id)
         if not step:
             raise ValueError(f"Step {step_id} not found")
-        if step.status != StepStatus.FAILED:
-            raise ValueError(
-                f"Step {step_id} is {step.status.value} — retry only resets FAILED steps"
-            )
+        self._assert_retry_eligible(step, confirmed=confirmed)
 
         # Collect the target + every FAILED descendant. BFS forward through
         # the DAG: a step is "downstream" if its depends_on includes one of

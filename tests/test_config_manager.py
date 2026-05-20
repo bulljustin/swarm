@@ -342,6 +342,76 @@ class TestApplyUpdate:
         assert "playbooks" in result.get("sections", {})
 
     @pytest.mark.asyncio
+    async def test_apply_playbooks_rejects_winrate_above_one(self) -> None:
+        """Cleanup batch: dashboard sliders cap at 100% but the REST
+        endpoint takes any float. Range check must reject values outside
+        [0.0, 1.0] explicitly so the silent-drop class can't sneak in."""
+        config = HiveConfig()
+        config.playbooks = PlaybookConfig()
+        mgr = _make_mgr(config=config)
+        mgr.reload = AsyncMock()  # type: ignore[assignment]
+        mgr.save = MagicMock()  # type: ignore[assignment]
+
+        body: dict[str, Any] = {"playbooks": {"auto_promote_winrate": 5.0}}
+        with pytest.raises(ValueError, match=r"auto_promote_winrate must be in"):
+            await mgr.apply_update(body)
+        # Config must NOT have mutated — pre-validation runs before
+        # generic dispatch so a bad value can never land partial.
+        assert config.playbooks.auto_promote_winrate == 0.7
+
+    @pytest.mark.asyncio
+    async def test_apply_playbooks_rejects_negative_winrate(self) -> None:
+        config = HiveConfig()
+        config.playbooks = PlaybookConfig()
+        mgr = _make_mgr(config=config)
+        mgr.reload = AsyncMock()  # type: ignore[assignment]
+        mgr.save = MagicMock()  # type: ignore[assignment]
+
+        body: dict[str, Any] = {"playbooks": {"prune_max_winrate": -0.1}}
+        with pytest.raises(ValueError, match=r"prune_max_winrate must be in"):
+            await mgr.apply_update(body)
+
+    @pytest.mark.asyncio
+    async def test_apply_playbooks_rejects_zero_promote_uses(self) -> None:
+        """auto_promote_uses must be >= 1 — a candidate with 0 uses can't
+        be promoted on outcome data that doesn't exist."""
+        config = HiveConfig()
+        config.playbooks = PlaybookConfig()
+        mgr = _make_mgr(config=config)
+        mgr.reload = AsyncMock()  # type: ignore[assignment]
+        mgr.save = MagicMock()  # type: ignore[assignment]
+
+        body: dict[str, Any] = {"playbooks": {"auto_promote_uses": 0}}
+        with pytest.raises(ValueError, match=r"auto_promote_uses must be >= 1"):
+            await mgr.apply_update(body)
+
+    @pytest.mark.asyncio
+    async def test_apply_playbooks_rejects_short_consolidation_interval(self) -> None:
+        """Engine floors consolidation at 300s anyway — reject anything
+        below so the operator can't save a config that the engine ignores."""
+        config = HiveConfig()
+        config.playbooks = PlaybookConfig()
+        mgr = _make_mgr(config=config)
+        mgr.reload = AsyncMock()  # type: ignore[assignment]
+        mgr.save = MagicMock()  # type: ignore[assignment]
+
+        body: dict[str, Any] = {"playbooks": {"consolidation_interval_seconds": 60}}
+        with pytest.raises(ValueError, match=r"consolidation_interval_seconds must be >= 300"):
+            await mgr.apply_update(body)
+
+    @pytest.mark.asyncio
+    async def test_apply_playbooks_rejects_negative_non_negative_field(self) -> None:
+        config = HiveConfig()
+        config.playbooks = PlaybookConfig()
+        mgr = _make_mgr(config=config)
+        mgr.reload = AsyncMock()  # type: ignore[assignment]
+        mgr.save = MagicMock()  # type: ignore[assignment]
+
+        body: dict[str, Any] = {"playbooks": {"max_synth_per_hour": -1}}
+        with pytest.raises(ValueError, match=r"max_synth_per_hour must be >= 0"):
+            await mgr.apply_update(body)
+
+    @pytest.mark.asyncio
     async def test_apply_playbooks_unknown_key_warns_not_silent(self) -> None:
         """P4b: an unknown body key under playbooks must NOT silently
         drop — it has to surface in the result so the operator can see

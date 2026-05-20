@@ -434,6 +434,63 @@ class TestPipelineEngine:
         with pytest.raises(ValueError, match=r"Step.*not found"):
             engine.retry_step(p.id, "ghost")
 
+    # -----------------------------------------------------------------
+    # Cleanup batch: retry-on-COMPLETED with operator confirmation.
+    # -----------------------------------------------------------------
+
+    def test_retry_step_completed_rejected_without_confirmation(self, tmp_path: Path) -> None:
+        """Retrying a COMPLETED step without `confirmed=True` must 409 —
+        re-running a completed step can double-fire side effects."""
+        engine, _ = self._make_engine(tmp_path)
+        p = engine.create("done", steps=[PipelineStep(id="a", name="A")])
+        engine.start_pipeline(p.id)
+        engine.complete_step(p.id, "a")
+        with pytest.raises(ValueError, match=r"requires explicit confirmation"):
+            engine.retry_step(p.id, "a")
+
+    def test_retry_step_completed_accepted_with_confirmation(self, tmp_path: Path) -> None:
+        """confirmed=True opts in to retrying a COMPLETED step. The step
+        flips back to PENDING and its transient fields wipe — same as
+        the FAILED retry path."""
+        engine, _ = self._make_engine(tmp_path)
+        p = engine.create("done", steps=[PipelineStep(id="a", name="A")])
+        engine.start_pipeline(p.id)
+        engine.complete_step(p.id, "a", result={"echo": 1})
+        reset = engine.retry_step(p.id, "a", confirmed=True)
+        assert reset == ["a"]
+        step_a = engine.get(p.id).get_step("a")
+        assert step_a.status in (StepStatus.PENDING, StepStatus.READY, StepStatus.IN_PROGRESS)
+        assert step_a.result == {}
+
+    def test_retry_step_completed_cascade_only_resets_failed(self, tmp_path: Path) -> None:
+        """Even with confirmation, retrying a COMPLETED step does NOT
+        cascade-reset its COMPLETED downstream. Only FAILED downstream
+        flips. Re-firing a whole COMPLETED subtree is a separate
+        decision we deliberately deferred."""
+        engine, _ = self._make_engine(tmp_path)
+        p = engine.create(
+            "mixed",
+            steps=[
+                PipelineStep(id="a", name="A"),
+                PipelineStep(id="b", name="B", depends_on=["a"]),
+            ],
+        )
+        engine.start_pipeline(p.id)
+        engine.complete_step(p.id, "a")
+        engine.get(p.id).get_step("b").status = StepStatus.COMPLETED
+        reset = engine.retry_step(p.id, "a", confirmed=True)
+        assert reset == ["a"]
+        assert engine.get(p.id).get_step("b").status == StepStatus.COMPLETED
+
+    def test_retry_step_in_progress_never_eligible(self, tmp_path: Path) -> None:
+        """In-progress steps don't have a meaningful retry — they're
+        still running. confirmed=True doesn't unlock them either."""
+        engine, _ = self._make_engine(tmp_path)
+        p = engine.create("running", steps=[PipelineStep(id="a", name="A")])
+        engine.start_pipeline(p.id)  # step is IN_PROGRESS
+        with pytest.raises(ValueError, match=r"in_progress"):
+            engine.retry_step(p.id, "a", confirmed=True)
+
 
 # ---------------------------------------------------------------------------
 # P3: route-level checks for the retry endpoint — status-code mapping.
@@ -509,6 +566,31 @@ class TestRetryRoute:
         async with TestClient(TestServer(app)) as client:
             resp = await client.post(f"/api/pipelines/{p.id}/steps/a/retry")
             assert resp.status == 409
+
+    @pytest.mark.asyncio
+    async def test_retry_route_accepts_confirmed_for_completed(self, tmp_path: Path) -> None:
+        """Cleanup batch: POST with {confirmed: true} body lets the
+        retry path accept a COMPLETED step. Without the flag the same
+        request 409s — UI gates this behind an explicit confirmation."""
+        from aiohttp.test_utils import TestClient, TestServer
+
+        app, engine = self._make_app(tmp_path)
+        p = engine.create("done", steps=[PipelineStep(id="a", name="A")])
+        engine.start_pipeline(p.id)
+        engine.complete_step(p.id, "a")
+        async with TestClient(TestServer(app)) as client:
+            # Without confirmation — 409.
+            resp = await client.post(f"/api/pipelines/{p.id}/steps/a/retry")
+            assert resp.status == 409
+            # With confirmation — 200, step resets.
+            resp = await client.post(
+                f"/api/pipelines/{p.id}/steps/a/retry",
+                json={"confirmed": True},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["ok"] is True
+            assert data["reset"] == ["a"]
 
 
 # ---------------------------------------------------------------------------

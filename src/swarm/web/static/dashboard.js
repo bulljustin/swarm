@@ -144,6 +144,9 @@
         hidePipelineDetail: function() { hidePipelineDetail(); },
         editFromDetail: function() { editFromDetail(); },
         retryStep: function(el) { retryStep(el.dataset.pipelineId, el.dataset.stepId); },
+        retryStepCompleted: function(el) { retryStepCompleted(el.dataset.pipelineId, el.dataset.stepId); },
+        hideRetryConfirm: function() { hideRetryConfirm(); },
+        confirmRetry: function() { confirmRetry(); },
         openLinkedTask: function(el) { openLinkedTask(el.dataset.taskId); },
         copyStepResult: function(el) { copyStepResult(el.dataset.stepId); },
         switchPlaybookFilter: function(el) { switchPlaybookFilter(el.dataset.pbStatus); },
@@ -2584,12 +2587,19 @@
             html += '<div class="pld-step-error">' + escapeHtml(String(step.error)) + '</div>';
         }
         html += _pldRenderResult(step);
-        // Per-step actions: Retry (FAILED only), Skip (READY/IN_PROGRESS),
-        // Mark done (human steps in READY/IN_PROGRESS) — mirrors what the
-        // list view already does for skip/done.
+        // Per-step actions: Retry (FAILED, or COMPLETED with confirm),
+        // Skip (READY/IN_PROGRESS), Mark done (human steps in
+        // READY/IN_PROGRESS) — mirrors what the list view already
+        // does for skip/done.
         var actions = [];
         if (step.status === 'failed') {
             actions.push('<button class="btn btn-sm btn-approve" data-action="retryStep" data-pipeline-id="' + escapeHtml(pipelineId) + '" data-step-id="' + escapeHtml(step.id) + '">Retry</button>');
+        }
+        // Cleanup batch: COMPLETED retry behind a confirmation modal.
+        // The warning prefix signals the side-effect risk; the click
+        // opens the confirm modal rather than firing the request.
+        if (step.status === 'completed') {
+            actions.push('<button class="btn btn-sm btn-amber" data-action="retryStepCompleted" data-pipeline-id="' + escapeHtml(pipelineId) + '" data-step-id="' + escapeHtml(step.id) + '" title="Re-run this completed step (may have side effects)">⚠ Retry</button>');
         }
         if (step.status === 'ready' || step.status === 'in_progress') {
             if (step.step_type === 'human') {
@@ -2677,11 +2687,15 @@
         showEditPipeline(pid);
     };
 
-    window.retryStep = function(pipelineId, stepId) {
-        fetch('/api/pipelines/' + pipelineId + '/steps/' + stepId + '/retry', {
+    // Internal: actually POST to the retry endpoint. Used by both the
+    // direct retryStep (FAILED steps) and the confirmRetry path
+    // (COMPLETED steps after the modal gate).
+    function _retryStepPost(pipelineId, stepId, confirmed) {
+        var body = confirmed ? JSON.stringify({ confirmed: true }) : '{}';
+        return fetch('/api/pipelines/' + pipelineId + '/steps/' + stepId + '/retry', {
             method: 'POST',
             headers: { 'X-Requested-With': 'Dashboard', 'Content-Type': 'application/json' },
-            body: '{}',
+            body: body,
         })
             .then(function(r) {
                 return r.json().then(function(d) { return { ok: r.ok, status: r.status, data: d }; });
@@ -2698,26 +2712,64 @@
                     showToast('Retried ' + stepId);
                 }
                 refreshPipelines();
-                // Live update will already fire via pipelines_changed; this
-                // is a belt-and-suspenders refresh for the detail view.
                 if (_pldViewingId === pipelineId) showPipelineDetail(pipelineId);
             })
             .catch(function() { showToast('Retry failed', true); });
+    }
+
+    window.retryStep = function(pipelineId, stepId) {
+        _retryStepPost(pipelineId, stepId, false);
     };
 
+    // Cleanup batch: retry-on-COMPLETED gating. Opens the confirmation
+    // modal with the (pipelineId, stepId) staged; confirmRetry fires the
+    // actual POST with confirmed:true.
+    var _pendingRetry = null;  // {pipelineId, stepId} while modal is open
+    window.retryStepCompleted = function(pipelineId, stepId) {
+        _pendingRetry = { pipelineId: pipelineId, stepId: stepId };
+        var cb = document.getElementById('retry-confirm-checkbox');
+        var go = document.getElementById('retry-confirm-go');
+        if (cb) { cb.checked = false; }
+        if (go) { go.disabled = true; }
+        document.getElementById('retry-confirm-modal').style.display = 'flex';
+    };
+
+    window.hideRetryConfirm = function() {
+        _pendingRetry = null;
+        document.getElementById('retry-confirm-modal').style.display = 'none';
+    };
+
+    window.confirmRetry = function() {
+        if (!_pendingRetry) return;
+        var info = _pendingRetry;
+        _retryStepPost(info.pipelineId, info.stepId, true);
+        hideRetryConfirm();
+    };
+
+    // Checkbox toggles the Retry button's disabled state — operator
+    // can't fire without explicitly acknowledging the side-effect risk.
+    (function () {
+        var cb = document.getElementById('retry-confirm-checkbox');
+        var go = document.getElementById('retry-confirm-go');
+        if (!cb || !go) return;
+        cb.addEventListener('change', function () { go.disabled = !cb.checked; });
+    })();
+
     window.openLinkedTask = function(taskId) {
-        // Tasks render via an HTMX partial, not from dashboard.js — there's
-        // no "open task editor by ID" helper to reuse. The honest move is
-        // to dismiss the detail modal, switch to the Tasks tab, then try
-        // to scroll the task row into view + highlight it. The operator
-        // clicks the row to open the editor (the tasks tab already wires
-        // that). If we can't find a row with the ID, surface a toast so
-        // the operator knows where to look.
+        // Cleanup batch follow-up: deep-link by ID via the new
+        // /api/tasks/{id} endpoint. Closes the detail modal, switches
+        // to the Tasks tab, fetches the task, and opens the editor
+        // pre-filled. Falls back to the scroll-and-flash behaviour if
+        // the fetch 404s (race with deletion) or rejects.
         hidePipelineDetail();
         if (typeof switchTab === 'function') switchTab('tasks');
+        if (typeof showTaskEditorById === 'function') {
+            setTimeout(function() { showTaskEditorById(taskId); }, 60);
+            return;
+        }
+        // Defensive fallback — should never hit since showTaskEditorById
+        // is defined right below. Kept as belt-and-suspenders.
         setTimeout(function() {
-            // Tasks panel partials render rows that include the task ID
-            // in various attributes; look for the most common shapes.
             var row = document.querySelector('[data-task-id="' + taskId + '"]')
                 || document.querySelector('[data-row-task-id="' + taskId + '"]')
                 || document.querySelector('[data-id="' + taskId + '"]');
@@ -2729,6 +2781,48 @@
                 showToast('Task #' + taskId + ' — scroll the Tasks tab to find it');
             }
         }, 80);
+    };
+
+    // Cleanup batch: ID-addressable task editor opener. The existing
+    // openTaskModal('edit', data) takes a flat dict from the row's data-*
+    // attributes; this wrapper fetches /api/tasks/{id} and translates the
+    // SwarmTask JSON into that flat dict so deep-links work without the
+    // operator having to find the row first.
+    window.showTaskEditorById = function(taskId) {
+        fetch('/api/tasks/' + encodeURIComponent(taskId), {
+            headers: { 'X-Requested-With': 'Dashboard' },
+        })
+            .then(function(r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function(t) {
+                // Translate SwarmTask JSON → openTaskModal('edit', data)
+                // shape. Field names diverge slightly (depends_on → deps,
+                // dependency_type → dep_type, acceptance_criteria → acceptance).
+                openTaskModal('edit', {
+                    id: t.id,
+                    title: t.title || '',
+                    desc: t.description || '',
+                    priority: t.priority || 'normal',
+                    task_type: t.task_type || '',
+                    tags: (t.tags || []).join(','),
+                    deps: (t.depends_on || []).join(','),
+                    resolution: t.resolution || '',
+                    status: t.status || '',
+                    is_cross_project: !!t.is_cross_project,
+                    source_worker: t.source_worker || '',
+                    target_worker: t.target_worker || '',
+                    dep_type: t.dependency_type || 'blocks',
+                    acceptance: (t.acceptance_criteria || []).join('\n'),
+                    context_refs: (t.context_refs || []).join('\n'),
+                    attachments: (t.attachments || []).join(','),
+                    assigned_worker: t.assigned_worker || '',
+                });
+            })
+            .catch(function(err) {
+                showToast('Task ' + taskId + ' not found: ' + (err.message || 'error'), true);
+            });
     };
 
     window.copyStepResult = function(stepId) {

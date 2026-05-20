@@ -678,6 +678,79 @@ class ConfigManager:
         #    into the structured ApplyResult (Phase 7).
         return _apply_dataclass_dict(bz, cfg, "drones", skip_keys=self._DRONE_CUSTOM_KEYS)
 
+    # Playbook fields that must lie in [0.0, 1.0] (winrate / similarity
+    # thresholds). REST endpoint is publicly addressable so the dashboard
+    # sliders alone don't protect against a direct bad POST.
+    _PLAYBOOK_UNIT_INTERVAL_FLOATS: frozenset[str] = frozenset(
+        {"auto_promote_winrate", "prune_max_winrate", "dedupe_similarity_threshold"}
+    )
+
+    # Playbook integer fields that must be at least 1 (use counts).
+    _PLAYBOOK_POSITIVE_INTEGERS: frozenset[str] = frozenset({"auto_promote_uses", "prune_min_uses"})
+
+    # Playbook fields that must be non-negative.
+    _PLAYBOOK_NON_NEGATIVE: frozenset[str] = frozenset(
+        {"min_resolution_chars", "max_synth_per_hour"}
+    )
+
+    @staticmethod
+    def _validate_unit_interval(pb: dict[str, Any], keys: frozenset[str]) -> None:
+        """Each key, if present, must be a number in [0.0, 1.0]."""
+        for key in keys:
+            if key not in pb:
+                continue
+            val = pb[key]
+            if not isinstance(val, (int, float)) or isinstance(val, bool):
+                raise ValueError(f"playbooks.{key} must be a number")
+            if val < 0.0 or val > 1.0:
+                raise ValueError(f"playbooks.{key} must be in [0.0, 1.0]")
+
+    @staticmethod
+    def _validate_positive_integers(pb: dict[str, Any], keys: frozenset[str]) -> None:
+        """Each key, if present, must be an integer >= 1."""
+        for key in keys:
+            if key not in pb:
+                continue
+            val = pb[key]
+            if not isinstance(val, int) or isinstance(val, bool):
+                raise ValueError(f"playbooks.{key} must be an integer")
+            if val < 1:
+                raise ValueError(f"playbooks.{key} must be >= 1")
+
+    @staticmethod
+    def _validate_non_negative(pb: dict[str, Any], keys: frozenset[str]) -> None:
+        """Each key, if present, must be a number >= 0."""
+        for key in keys:
+            if key not in pb:
+                continue
+            val = pb[key]
+            if not isinstance(val, (int, float)) or isinstance(val, bool):
+                raise ValueError(f"playbooks.{key} must be a number")
+            if val < 0:
+                raise ValueError(f"playbooks.{key} must be >= 0")
+
+    def _validate_playbook_ranges(self, pb: dict[str, Any]) -> None:
+        """Pre-validate PlaybookConfig fields (cleanup batch follow-up).
+
+        Mirrors ``_validate_drone_ranges`` — explicit error messages
+        before the generic dispatch so a bad winrate doesn't make it to
+        the storage layer where the silent-drop bug class lives. The
+        dashboard sliders prevent the common case but the REST endpoint
+        accepts any JSON, so this is the only gate.
+        """
+        self._validate_unit_interval(pb, self._PLAYBOOK_UNIT_INTERVAL_FLOATS)
+        self._validate_positive_integers(pb, self._PLAYBOOK_POSITIVE_INTEGERS)
+        self._validate_non_negative(pb, self._PLAYBOOK_NON_NEGATIVE)
+        # Consolidation floor matches the engine's _playbook_consolidation_loop
+        # which floors at 300s anyway; rejecting tiny values prevents the
+        # operator from saving a config that the engine then ignores.
+        if "consolidation_interval_seconds" in pb:
+            val = pb["consolidation_interval_seconds"]
+            if not isinstance(val, (int, float)) or isinstance(val, bool):
+                raise ValueError("playbooks.consolidation_interval_seconds must be a number")
+            if val < 300:
+                raise ValueError("playbooks.consolidation_interval_seconds must be >= 300")
+
     def _apply_playbooks(self, pb: dict[str, Any]) -> FieldOutcome:
         """Validate and apply playbooks section of a config update (P4b).
 
@@ -687,7 +760,11 @@ class ConfigManager:
         the dataclass auto-flow through; unknown body keys are logged
         + reported in the FieldOutcome the same way every other section
         already does.
+
+        Range checks land before the generic dispatch so explicit
+        contract messages win over type errors (cleanup batch).
         """
+        self._validate_playbook_ranges(pb)
         return _apply_dataclass_dict(pb, self._config.playbooks, "playbooks")
 
     def _apply_queen_oversight(self, ov: dict[str, Any]) -> None:

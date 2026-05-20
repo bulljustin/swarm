@@ -890,6 +890,38 @@
         </div>
     </div>
 </div>
+<!-- Retry-on-COMPLETED confirmation modal (cleanup batch follow-up).
+     Operator clicks Retry on a COMPLETED step → this modal explains the
+     side-effect risk and gates the retry behind an explicit checkbox. -->
+<div id="retry-confirm-modal" class="modal-overlay" style="display:none" data-modal-dismiss="hideRetryConfirm">
+    <div class="modal-box modal-md" role="dialog" aria-modal="true">
+        <div class="panel-header">
+            <span>⚠ Retry completed step?</span>
+            <button class="btn btn-sm btn-secondary" data-action="hideRetryConfirm">Close</button>
+        </div>
+        <div class="modal-padding">
+            <p class="text-sm">
+                You're about to retry a step that has already <strong>completed</strong>.
+                This will <strong>re-run</strong> the step from scratch, which may have side effects:
+            </p>
+            <ul class="text-sm text-muted" style="margin-left:1.2rem">
+                <li>Shell commands execute again</li>
+                <li>Webhooks fire again</li>
+                <li>Agent tasks get re-created</li>
+                <li>Anything the step did is performed a second time</li>
+            </ul>
+            <p class="text-sm">FAILED downstream steps will reset alongside this one; COMPLETED downstream stays untouched.</p>
+            <label class="flex-center gap-sm mt-md" style="cursor:pointer">
+                <input type="checkbox" id="retry-confirm-checkbox">
+                <span>I understand this step may have side effects when re-run</span>
+            </label>
+            <div class="modal-footer modal-footer-flush mt-md">
+                <button class="btn btn-secondary" data-action="hideRetryConfirm">Cancel</button>
+                <button class="btn btn-amber" id="retry-confirm-go" data-action="confirmRetry" disabled>Retry this step</button>
+            </div>
+        </div>
+    </div>
+</div>
 <!-- Feedback modal (hidden) — bug reports, feature requests, questions -->
 <div id="feedback-modal" class="modal-overlay" style="display:none" data-modal-dismiss="hideFeedback">
     <div class="modal-box modal-lg" role="dialog" aria-modal="true">
