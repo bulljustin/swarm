@@ -10,6 +10,40 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.20.11] - 2026-05-20
+
+### Fixes
+
+- **Mobile visual fixes from the QA findings doc — P1 through P6.**
+  Pure CSS, no JS / HTML / backend changes. Before/after screenshots
+  via the QA harness confirm every item:
+  - **P1 (BLOCKER) — Queen card compacted on phone.** Was ~140px tall
+    eating 40% of mobile viewport; now ~50px with `padding: 0.4rem
+    0.55rem`, 24×24 bee icon (down from 32×32), and `queen-name`
+    forced to single-line ellipsis. Worker list now starts within
+    a thumb's reach of the top instead of after a half-screen scroll.
+  - **P2 (HIGH) — Status strip label/value separation.** Was
+    "queue0/0 last hr14 today56 5h0%" (labels colliding with
+    values); now "queue **0/0**  last hr **9**  today **59**" with
+    a proper `0.35em` gap inside each `.cc-qs-item`. Reads at a glance.
+  - **P3 (HIGH) — Digest strip horizontal scroll.** Was truncating
+    "completed: Ext…" with no affordance; now `overflow-x: auto` on
+    mobile so the operator can scroll the whole digest if it spills.
+  - **P4 (MEDIUM) — Hide BUZ/RES/SLE pills in header on mobile.**
+    Was wrapping to 3 vertical lines (60+ px header height); now
+    hidden under 768px. The same counts are available via the
+    worker-state filter chips directly below.
+  - **P5 (MEDIUM) — Hide "operator command center" subtitle on
+    phone.** Was wasting 3 lines inside the Queen card; now
+    `display: none` on `.queen-meta` under 600px.
+  - **P6 (LOW) — Attention empty-state word-wrap.** Was truncating
+    mid-word ("the swarm i…"); now `white-space: normal` +
+    `word-break: normal` on `.cc-empty` under 600px renders the full
+    "Nothing needs you — the swarm is running clean" cleanly.
+  Re-run of `scripts/mobile_qa.py` after the fix confirms zero
+  pageerrors, all six visual issues resolved at 390px. Spec /
+  findings at `docs/qa-mobile-findings-2026-05-20.md`.
+
 ## [2026.5.20.10] - 2026-05-20
 
 ### Features

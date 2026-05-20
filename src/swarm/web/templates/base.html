@@ -2536,10 +2536,48 @@
             .cc-attention-card-detail { max-height: none !important; }
             /* Keep the Queen terminal usefully tall when focused */
             body.cc-focus-queen .cc-queen-term-holder { min-height: 280px; }
+
+            /* Mobile QA fix-up (2026-05-20 findings doc):
+               P5 — drop the "operator command center" subtitle on phone;
+               it wastes 3 lines inside the Queen card and adds zero
+               value. The card stays clickable and the "Queen Dashboard"
+               line still identifies it. */
+            .queen-card .queen-meta { display: none; }
+
+            /* P1 — compact the Queen card itself on phone: smaller bee,
+               tighter padding, single-line name. Pulls the worker list
+               up to where the content starts instead of consuming 140+px. */
+            .queen-card { padding: 0.4rem 0.55rem; margin: 0.2rem 0.25rem 0.35rem; gap: 0.5rem; }
+            .queen-bee { width: 24px; height: 24px; }
+            .queen-name { font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+            /* P3 — digest strip horizontal scroll instead of truncation.
+               flex-wrap is already on but the children sometimes don't
+               break; allowing horizontal scroll guarantees the operator
+               can see everything. */
+            .cc-digest-strip { overflow-x: auto; }
+
+            /* P6 — Attention empty-state was truncating mid-word
+               ("the swarm i..."). P5 set white-space: normal on
+               .cc-attention-card-body but the empty-state container
+               (.cc-empty) is a sibling, not a descendant. */
+            .cc-empty { white-space: normal; word-break: normal; }
+        }
+        @media (max-width: 768px) {
+            /* P4 — hide the BUZ/RES/SLE pills in the top header. They
+               wrap to 3 lines on a phone (no room next to "Drones: ON"
+               and the hamburger), eating 60+px of header. The same
+               counts are available via the worker-state filter chips
+               directly below. */
+            #status-bar .status-compact { display: none !important; }
         }
         #cc-queen-strip.cc-qs-visible { display: flex !important; }
-        .cc-qs-item { display: inline-flex; align-items: center; white-space: nowrap; }
-        .cc-qs-value { color: var(--honey); font-weight: 600; margin-left: 0.15em; }
+        /* P2 — give the label / value pair inside each cc-qs-item real
+           visible separation. Was 0.15em — too tight on phone, looked
+           like "queue0/0", "today56". 0.4em is small enough for desktop
+           and obvious enough on phone. */
+        .cc-qs-item { display: inline-flex; align-items: center; white-space: nowrap; gap: 0.35em; }
+        .cc-qs-value { color: var(--honey); font-weight: 600; margin-left: 0; }
         #cc-qs-state.state-thinking { color: var(--leaf); }
         #cc-qs-state.state-alive { color: var(--lavender); }
         #cc-qs-state.state-degraded { color: var(--honey); }
