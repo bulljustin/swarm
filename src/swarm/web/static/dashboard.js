@@ -1241,8 +1241,37 @@
             if (c === 'all') b.classList.toggle('active', activeBuzzCategories.size === 0);
             else b.classList.toggle('active', activeBuzzCategories.has(c));
         });
+        // P6: keep the mobile select in sync — only ever a single value,
+        // so when multiple chips are active we display 'all' as the
+        // safest summary (everything is shown). Operators on a phone
+        // get single-category filtering rather than chip multi-select.
+        var sel = document.getElementById('buzz-filter-select');
+        if (sel) {
+            if (activeBuzzCategories.size === 1) {
+                sel.value = Array.from(activeBuzzCategories)[0];
+            } else {
+                sel.value = 'all';
+            }
+        }
         refreshBuzzLog();
     };
+
+    // P6: when the mobile select changes, clear all chips and apply
+    // just the chosen category — single-category model on phone.
+    (function () {
+        var sel = document.getElementById('buzz-filter-select');
+        if (!sel) return;
+        sel.addEventListener('change', function () {
+            activeBuzzCategories.clear();
+            if (sel.value && sel.value !== 'all') activeBuzzCategories.add(sel.value);
+            document.querySelectorAll('#buzz-filters .filter-chip').forEach(function (b) {
+                var c = b.getAttribute('data-buzz-cat');
+                if (c === 'all') b.classList.toggle('active', activeBuzzCategories.size === 0);
+                else b.classList.toggle('active', activeBuzzCategories.has(c));
+            });
+            refreshBuzzLog();
+        });
+    })();
 
     var _buzzSearchTimer = null;
     window.debouncedBuzzSearch = function(val) {

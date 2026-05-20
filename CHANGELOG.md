@@ -10,6 +10,35 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.20.7] - 2026-05-20
+
+### Features
+
+- **Mobile global polish — P6 of the editor UX series.** Wraps up the
+  cross-cutting mobile pass that the audit punch-list flagged. All
+  interactive elements inside `@media (pointer: coarse)` are now at
+  the 44px iOS/Material tap-target minimum — `.btn`, `.tab-btn`,
+  `.worker-item`, `.queen-banner-actions .btn`, `.mobile-overflow-btn`
+  (the header hamburger), and `.resize-handle` (24px on touch — the
+  prior 12px was unreliable). `.filter-chip` jumps from 32px to 40px
+  with more padding so the chip rows are actually tappable. Under
+  600px, the task editor's primary-metadata row (priority / type /
+  status / worker / tags) wraps with each field at 100% width instead
+  of fighting for space in the flex line, and the first filter-chip
+  in every filter bar gets `position: sticky; left: 0` so the "All"
+  reset stays grabbable while the row horizontal-scrolls. Worker
+  names in the sidebar pill drop the 140px max-width truncation at
+  ≤768px — names wrap to a second line rather than ellipsis-clipping
+  on a phone where there's room for the full string. The Activity
+  (Buzz Log) filter chips were previously hidden entirely on mobile;
+  P6 brings them back as a `<select>` paired with the chips, kept in
+  sync by `switchBuzzFilter` and a change listener — single-category
+  filtering on phone, multi-chip on desktop.
+
+### Changes
+
+### Fixes
+
 ## [2026.5.20.6] - 2026-05-20
 
 ### Features

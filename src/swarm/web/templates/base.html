@@ -2342,16 +2342,22 @@
             touch-action: none;
         }
 
-        /* Touch-friendly targets */
+        /* Touch-friendly targets. P6 brought all interactive elements up to
+           the 44px iOS/Material minimum — previously many sat at 36-40px,
+           which is below the documented threshold for reliable tap. */
         @media (pointer: coarse) {
-            .worker-item { min-height: 40px; }
-            .btn { min-height: 36px; }
-            .tab-btn { min-height: 40px; }
+            .worker-item { min-height: 44px; }
+            .btn { min-height: 44px; }
+            .tab-btn { min-height: 44px; }
             /* Show mobile send bar on touch devices */
             .mobile-send-bar.visible { display: flex; }
-            .filter-chip { min-height: 32px; padding: 0.25rem 0.6rem; }
-            .resize-handle { height: 12px; }
-            .queen-banner-actions .btn { min-height: 36px; min-width: 44px; }
+            .filter-chip { min-height: 40px; padding: 0.4rem 0.7rem; }
+            /* Resize handle: 12px is half a fingertip; 24px is still
+               unobtrusive on desktop trackpads (this rule is coarse-pointer
+               only) but actually grabbable on touch. */
+            .resize-handle { height: 24px; }
+            .queen-banner-actions .btn { min-height: 44px; min-width: 44px; }
+            .mobile-overflow-btn { min-height: 44px; min-width: 44px; }
             .toast { cursor: pointer; }
         }
 
@@ -2564,11 +2570,42 @@
         body.cc-active #terminal-actions { display: none !important; }
         /* Hide the mobile send bar on dashboard for the same reason. */
         body.cc-active #mobile-send-bar { display: none !important; }
+        /* P6: buzz-filter-select is desktop-hidden; only emerges on mobile
+           where the chip strip is hidden. JS mirrors selection both ways. */
+        .buzz-filter-select-mobile { display: none; }
         @media (max-width: 768px) {
             /* The Activity / Buzz Log filter chip strip eats too much
-               vertical space on phones. Operators can use the search
-               box; chips are desktop-only. */
+               vertical space on phones. Replaced by a select (P6) so
+               operators keep the filter without burning the column. */
             #buzz-filters .filter-chip { display: none; }
+            .buzz-filter-select-mobile { display: inline-block; max-width: 160px; }
+            /* Worker pill names previously truncated at 140px even on a
+               400px sidebar where there was plenty of room. P6 removes the
+               cap and lets text flow; pills wrap to multiple lines if
+               needed rather than ellipsis-truncating mid-name. */
+            .worker-item .worker-name {
+                max-width: none;
+                overflow: visible;
+                text-overflow: clip;
+                white-space: normal;
+            }
+        }
+        @media (max-width: 600px) {
+            /* Task modal: stack the priority/type/status/worker/tags row
+               so each field gets full width instead of fighting for it
+               on a phone. */
+            .tm-meta-row { flex-wrap: wrap; }
+            .tm-meta-row > div { flex: 1 1 100%; min-width: 0; }
+            /* Filter chip rows: sticky "All" so it stays grabbable when
+               the row horizontal-scrolls. Targets the first .filter-chip
+               in each filter-bar; left-edge sticky with a small bg shadow
+               to make it visually distinct from scrolled content. */
+            .filter-bar .filter-chip:first-of-type {
+                position: sticky; left: 0;
+                background: var(--panel);
+                box-shadow: 2px 0 4px rgba(0, 0, 0, 0.2);
+                z-index: 1;
+            }
         }
     </style>
 </head>

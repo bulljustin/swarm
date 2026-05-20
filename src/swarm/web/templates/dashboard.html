@@ -383,6 +383,16 @@
                     <button class="filter-chip" data-buzz-cat="worker" data-action="switchBuzzFilter">Worker</button>
                     <button class="filter-chip" data-buzz-cat="message" data-action="switchBuzzFilter">Message</button>
                     <button class="filter-chip" data-buzz-cat="operator" data-action="switchBuzzFilter">Operator</button>
+                    <!-- P6: chip strip is hidden under 768px; this select takes its place. -->
+                    <select id="buzz-filter-select" class="modal-select buzz-filter-select-mobile">
+                        <option value="all">All</option>
+                        <option value="drone">Drone</option>
+                        <option value="task">Task</option>
+                        <option value="queen">Queen</option>
+                        <option value="worker">Worker</option>
+                        <option value="message">Message</option>
+                        <option value="operator">Operator</option>
+                    </select>
                     <input type="text" id="buzz-search" placeholder="Search log..." data-input-action="debouncedBuzzSearch" class="task-search">
                 </div>
                 <div class="panel-body" id="buzz-log"></div>
@@ -583,7 +593,7 @@
             <input id="tm-title" type="text" placeholder="Auto-generated if blank" class="modal-input mb-md">
 
             <!-- ============== Primary metadata: priority / type / status / tags ============== -->
-            <div class="flex-center gap-md mb-md">
+            <div class="flex-center gap-md mb-md tm-meta-row">
                 <div>
                     <label class="form-label">Priority</label>
                     <select id="tm-priority" class="modal-select">
