@@ -10,6 +10,48 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.20.8] - 2026-05-20
+
+### Features
+
+- **Playbook config tuning UI — P4b, the deferred half of P4.** Wires
+  `PlaybookConfig` through all six layers of the config-save-chain so
+  operators can edit the synthesis loop's tuning knobs from the
+  dashboard instead of hand-editing `swarm.yaml`. Adds a new
+  Playbooks pane to the Automation tab with three sections —
+  Synthesis (enabled / eligible task types / min resolution chars /
+  hourly cap), Promotion + Pruning (auto-promote uses + winrate
+  slider, prune min uses + winrate slider), and Consolidation
+  (interval seconds + dedupe similarity slider + Skills install
+  toggle). Winrate / similarity fields render as 0–100% sliders
+  backed by hidden float inputs so `buildPayload` reads clean
+  0.0–1.0 values without re-doing the math.
+
+  Per the config-save-chain audit (`docs/audits/config-save-chain-2026-05-04.md`):
+  L1 dataclass (already existed); L2 form added to `config.html`;
+  L3 dispatcher — `"playbooks"` added to `_KNOWN_BODY_KEYS` + a new
+  `if "playbooks" in body` branch in `apply_update`; L4 handler —
+  new `_apply_playbooks()` method routing through the generic
+  `_apply_dataclass_dict` dispatcher so unknown keys land in the
+  structured FieldOutcome (no silent drops); L5 persistence —
+  `"playbooks"` added to `_JSON_KEYS` + new `_serialize_playbooks()`
+  in `serialization.py`; L6 load — `"playbooks"` added to the
+  `_DATACLASS_BLOBS` map so the generic `_parse_json_dataclass`
+  loader picks it up automatically. `PlaybookConfig` is now
+  re-exported from `swarm.config` for consistency with the other
+  top-level dataclasses.
+
+  3 new tests: round-trip through save/load (all 11 fields verified),
+  `apply_update` happy path, and an unknown-key check that asserts
+  bogus body fields surface in the FieldOutcome's `unknown` list
+  rather than getting silently swallowed — that was exactly the
+  failure mode the audit's silent-drop bug class produced before
+  Phase 7 of #328 added the structured outcome shape.
+
+### Changes
+
+### Fixes
+
 ## [2026.5.20.7] - 2026-05-20
 
 ### Features

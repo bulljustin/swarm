@@ -14,6 +14,7 @@ from swarm.config import (
     GroupConfig,
     HiveConfig,
     NotifyConfig,
+    PlaybookConfig,
     QueenConfig,
     WorkerConfig,
 )
@@ -307,6 +308,57 @@ class TestApplyUpdate:
         assert config.drones.enabled is False
         assert config.drones.poll_interval == 15.0
         assert config.drones.escalation_threshold == 60.0
+
+    @pytest.mark.asyncio
+    async def test_apply_playbooks_update(self) -> None:
+        """P4b: playbook section flows through apply_update + the generic
+        dataclass dispatcher. Verifies the dispatcher branch + handler
+        are wired together with no silent drops."""
+        config = HiveConfig()
+        config.playbooks = PlaybookConfig()
+        mgr = _make_mgr(config=config)
+
+        body: dict[str, Any] = {
+            "playbooks": {
+                "enabled": False,
+                "max_synth_per_hour": 10,
+                "auto_promote_uses": 5,
+                "auto_promote_winrate": 0.8,
+                "consolidation_interval_seconds": 7200.0,
+            }
+        }
+        mgr.reload = AsyncMock()  # type: ignore[assignment]
+        mgr.save = MagicMock()  # type: ignore[assignment]
+
+        result = await mgr.apply_update(body)
+
+        assert config.playbooks.enabled is False
+        assert config.playbooks.max_synth_per_hour == 10
+        assert config.playbooks.auto_promote_uses == 5
+        assert config.playbooks.auto_promote_winrate == 0.8
+        assert config.playbooks.consolidation_interval_seconds == 7200.0
+        # The structured ApplyResult should record the consumed fields
+        # under "playbooks" — proves the section was actually dispatched.
+        assert "playbooks" in result.get("sections", {})
+
+    @pytest.mark.asyncio
+    async def test_apply_playbooks_unknown_key_warns_not_silent(self) -> None:
+        """P4b: an unknown body key under playbooks must NOT silently
+        drop — it has to surface in the result so the operator can see
+        it. Mirrors how other sections handle unknown fields."""
+        config = HiveConfig()
+        config.playbooks = PlaybookConfig()
+        mgr = _make_mgr(config=config)
+
+        body: dict[str, Any] = {"playbooks": {"enabled": True, "bogus_field": 123}}
+        mgr.reload = AsyncMock()  # type: ignore[assignment]
+        mgr.save = MagicMock()  # type: ignore[assignment]
+
+        result = await mgr.apply_update(body)
+        section = result.get("sections", {}).get("playbooks", {})
+        assert "bogus_field" in (section.get("unknown") or [])
+        # The known field still landed despite the noisy sibling.
+        assert config.playbooks.enabled is True
 
     @pytest.mark.asyncio
     async def test_apply_queen_update(self) -> None:

@@ -17,6 +17,7 @@ from swarm.config.models import (
     HiveConfig,
     NotifyConfig,
     OversightConfig,
+    PlaybookConfig,
     ProviderTuning,
     QueenConfig,
     ResourceConfig,
@@ -390,6 +391,41 @@ class TestRoundTrip:
         assert names == {"backend", "all"}
         all_group = next(g for g in loaded.groups if g.name == "all")
         assert sorted(all_group.workers) == ["api", "web"]
+
+    def test_playbook_config_round_trip(self, db: SwarmDB) -> None:
+        """P4b: PlaybookConfig must survive save → load through the unified
+        config table. Silent-drop class lives in this chain, so the test
+        asserts every field round-trips, not just the truthy subset.
+        """
+        original = HiveConfig(
+            playbooks=PlaybookConfig(
+                enabled=False,
+                eligible_task_types=["feature", "chore"],
+                min_resolution_chars=100,
+                max_synth_per_hour=10,
+                auto_promote_uses=5,
+                auto_promote_winrate=0.8,
+                prune_min_uses=10,
+                prune_max_winrate=0.2,
+                consolidation_interval_seconds=3600.0,
+                dedupe_similarity_threshold=0.8,
+                install_as_native_skills=False,
+            )
+        )
+        save_config_to_db(db, original)
+        loaded = load_config_from_db(db)
+        assert loaded is not None
+        assert loaded.playbooks.enabled is False
+        assert loaded.playbooks.eligible_task_types == ["feature", "chore"]
+        assert loaded.playbooks.min_resolution_chars == 100
+        assert loaded.playbooks.max_synth_per_hour == 10
+        assert loaded.playbooks.auto_promote_uses == 5
+        assert loaded.playbooks.auto_promote_winrate == 0.8
+        assert loaded.playbooks.prune_min_uses == 10
+        assert loaded.playbooks.prune_max_winrate == 0.2
+        assert loaded.playbooks.consolidation_interval_seconds == 3600.0
+        assert loaded.playbooks.dedupe_similarity_threshold == 0.8
+        assert loaded.playbooks.install_as_native_skills is False
 
     def test_drone_config_round_trip(self, db: SwarmDB) -> None:
         original = HiveConfig(

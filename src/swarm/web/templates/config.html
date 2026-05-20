@@ -475,6 +475,77 @@
         </div>
     </div>
 
+    <!-- Playbooks tab (P4b) — synthesis loop tuning. Co-displayed under the
+         Automation tab via the tabGroups map in switchConfigTab so operators
+         find it next to Drones / Queen rather than burying it in Advanced. -->
+    <div id="config-tab-playbooks" class="config-tab" style="display:none">
+        <div class="config-section">
+            <h3>Playbooks — Synthesis</h3>
+            <p class="help-text">
+                Self-improving procedural memory. Successful tasks are synthesized into
+                candidate playbooks by the headless Queen, vetted via win/loss outcomes,
+                and propagated fleet-wide once they pass the promotion threshold.
+            </p>
+            {{ config_toggle('enabled', 'Enable synthesis on task completion', 'cfg-playbook-enabled', config.playbooks.enabled) }}
+            <div class="config-field">
+                <label>eligible_task_types <span class="hint">comma-separated; task types that can produce playbooks</span></label>
+                <input class="config-input text-left flex-1" type="text" id="cfg-playbook-eligible_task_types"
+                       value="{{ config.playbooks.eligible_task_types|join(', ') }}"
+                       placeholder="feature, bug, chore">
+            </div>
+            {{ config_number('min_resolution_chars', 'Skip synthesis when the resolution is shorter than this', 'cfg-playbook-min_resolution_chars', config.playbooks.min_resolution_chars, step=10, min=0) }}
+            {{ config_number('max_synth_per_hour', 'Hourly cap on synthesis attempts (rate limit on headless Queen calls)', 'cfg-playbook-max_synth_per_hour', config.playbooks.max_synth_per_hour, step=1, min=0) }}
+        </div>
+        <div class="config-section">
+            <h3>Promotion / Pruning</h3>
+            <p class="help-text">
+                A candidate playbook becomes ACTIVE once it crosses the promotion bar;
+                it gets retired once its winrate falls below the pruning bar after
+                enough uses. Defaults are conservative — tune from
+                <code>playbook_events</code> trends in the Playbooks tab.
+            </p>
+            {{ config_number('auto_promote_uses', 'Min uses before a candidate is eligible for auto-promote', 'cfg-playbook-auto_promote_uses', config.playbooks.auto_promote_uses, step=1, min=1) }}
+            <div class="config-field">
+                <label>auto_promote_winrate <span class="hint">Min winrate (0.0–1.0) to flip candidate → active</span></label>
+                <input type="range" min="0" max="100" step="5" id="cfg-playbook-auto_promote_winrate_slider"
+                       value="{{ (config.playbooks.auto_promote_winrate * 100)|int }}"
+                       data-input-action="syncPlaybookPromoteWr"
+                       class="flex-1 field-sm">
+                <span id="cfg-playbook-auto_promote_winrate_display" class="confidence-display">{{ (config.playbooks.auto_promote_winrate * 100)|int }}%</span>
+                <!-- Hidden field actually read by buildPayload — stores the float. -->
+                <input type="hidden" id="cfg-playbook-auto_promote_winrate" value="{{ config.playbooks.auto_promote_winrate }}">
+            </div>
+            {{ config_number('prune_min_uses', 'Min uses before pruning is even considered', 'cfg-playbook-prune_min_uses', config.playbooks.prune_min_uses, step=1, min=1) }}
+            <div class="config-field">
+                <label>prune_max_winrate <span class="hint">Winrate ceiling for pruning — drop below this and it retires</span></label>
+                <input type="range" min="0" max="100" step="5" id="cfg-playbook-prune_max_winrate_slider"
+                       value="{{ (config.playbooks.prune_max_winrate * 100)|int }}"
+                       data-input-action="syncPlaybookPruneWr"
+                       class="flex-1 field-sm">
+                <span id="cfg-playbook-prune_max_winrate_display" class="confidence-display">{{ (config.playbooks.prune_max_winrate * 100)|int }}%</span>
+                <input type="hidden" id="cfg-playbook-prune_max_winrate" value="{{ config.playbooks.prune_max_winrate }}">
+            </div>
+        </div>
+        <div class="config-section">
+            <h3>Consolidation</h3>
+            <p class="help-text">
+                Background sweep that asks the headless Queen whether near-duplicate
+                playbooks in the same scope should be merged. Default 6h.
+            </p>
+            {{ config_number('consolidation_interval_seconds', 'Seconds between consolidation sweeps (floored at 300)', 'cfg-playbook-consolidation_interval_seconds', config.playbooks.consolidation_interval_seconds, step=300, min=300) }}
+            <div class="config-field">
+                <label>dedupe_similarity_threshold <span class="hint">FTS rank cutoff for near-duplicate detection</span></label>
+                <input type="range" min="0" max="100" step="5" id="cfg-playbook-dedupe_similarity_threshold_slider"
+                       value="{{ (config.playbooks.dedupe_similarity_threshold * 100)|int }}"
+                       data-input-action="syncPlaybookDedupe"
+                       class="flex-1 field-sm">
+                <span id="cfg-playbook-dedupe_similarity_threshold_display" class="confidence-display">{{ (config.playbooks.dedupe_similarity_threshold * 100)|int }}%</span>
+                <input type="hidden" id="cfg-playbook-dedupe_similarity_threshold" value="{{ config.playbooks.dedupe_similarity_threshold }}">
+            </div>
+            {{ config_toggle('install_as_native_skills', 'Render ACTIVE playbooks as Claude Code Skills in worker .claude/skills/', 'cfg-playbook-install_as_native_skills', config.playbooks.install_as_native_skills) }}
+        </div>
+    </div>
+
     <!-- Workers tab -->
     <div id="config-tab-workers" class="config-tab" style="display:none">
         <div class="panel">
@@ -1251,7 +1322,9 @@
         // Merged tab groups: show multiple content divs for consolidated tabs
         var tabGroups = {
             workers: ['workers', 'groups'],
-            automation: ['automation', 'queen', 'drones'],
+            // P4b: playbooks live alongside drones/queen under Automation
+            // so operators tune all the agent-behavior knobs in one place.
+            automation: ['automation', 'queen', 'drones', 'playbooks'],
             // 'logs' moved to its own dedicated tab — was previously
             // co-rendered under Advanced, which meant clicking Advanced
             // also showed the log viewer.
@@ -1828,6 +1901,23 @@
                     max_calls_per_hour: parseInt(document.getElementById('cfg-queen-oversight-max_calls').value),
                     operator_engagement_minutes: parseFloat(document.getElementById('cfg-queen-oversight-operator_engagement').value),
                 },
+            },
+            // P4b: playbook synthesis tuning. Sliders for the three 0..1
+            // winrate / similarity fields read from hidden inputs that the
+            // sync handlers keep in sync with the visible range controls.
+            playbooks: {
+                enabled: document.getElementById('cfg-playbook-enabled').checked,
+                eligible_task_types: (document.getElementById('cfg-playbook-eligible_task_types').value || '')
+                    .split(',').map(function(s) { return s.trim(); }).filter(Boolean),
+                min_resolution_chars: parseInt(document.getElementById('cfg-playbook-min_resolution_chars').value),
+                max_synth_per_hour: parseInt(document.getElementById('cfg-playbook-max_synth_per_hour').value),
+                auto_promote_uses: parseInt(document.getElementById('cfg-playbook-auto_promote_uses').value),
+                auto_promote_winrate: parseFloat(document.getElementById('cfg-playbook-auto_promote_winrate').value),
+                prune_min_uses: parseInt(document.getElementById('cfg-playbook-prune_min_uses').value),
+                prune_max_winrate: parseFloat(document.getElementById('cfg-playbook-prune_max_winrate').value),
+                consolidation_interval_seconds: parseFloat(document.getElementById('cfg-playbook-consolidation_interval_seconds').value),
+                dedupe_similarity_threshold: parseFloat(document.getElementById('cfg-playbook-dedupe_similarity_threshold').value),
+                install_as_native_skills: document.getElementById('cfg-playbook-install_as_native_skills').checked,
             },
             notifications: (function() {
                 // Collect per-channel event filters from checkboxes
@@ -3228,6 +3318,24 @@
         if (!el) return;
         if (el.dataset.inputAction === 'updateConfDisplay') {
             document.getElementById('conf-display').textContent = el.value + '%';
+        }
+        // P4b: sliders for the three 0..1 playbook fields. Each slider is
+        // an integer 0..100 that we mirror into a hidden float input so
+        // buildPayload reads a clean 0..1 value without re-doing the math.
+        else if (el.dataset.inputAction === 'syncPlaybookPromoteWr') {
+            var v = parseInt(el.value, 10) / 100;
+            document.getElementById('cfg-playbook-auto_promote_winrate').value = v;
+            document.getElementById('cfg-playbook-auto_promote_winrate_display').textContent = el.value + '%';
+        }
+        else if (el.dataset.inputAction === 'syncPlaybookPruneWr') {
+            var v = parseInt(el.value, 10) / 100;
+            document.getElementById('cfg-playbook-prune_max_winrate').value = v;
+            document.getElementById('cfg-playbook-prune_max_winrate_display').textContent = el.value + '%';
+        }
+        else if (el.dataset.inputAction === 'syncPlaybookDedupe') {
+            var v = parseInt(el.value, 10) / 100;
+            document.getElementById('cfg-playbook-dedupe_similarity_threshold').value = v;
+            document.getElementById('cfg-playbook-dedupe_similarity_threshold_display').textContent = el.value + '%';
         }
     });
 

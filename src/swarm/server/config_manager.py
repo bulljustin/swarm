@@ -678,6 +678,18 @@ class ConfigManager:
         #    into the structured ApplyResult (Phase 7).
         return _apply_dataclass_dict(bz, cfg, "drones", skip_keys=self._DRONE_CUSTOM_KEYS)
 
+    def _apply_playbooks(self, pb: dict[str, Any]) -> FieldOutcome:
+        """Validate and apply playbooks section of a config update (P4b).
+
+        PlaybookConfig is all-primitives (no nested dataclasses, no
+        custom validation rules beyond the field types themselves) so
+        the generic dispatcher handles everything. New fields added to
+        the dataclass auto-flow through; unknown body keys are logged
+        + reported in the FieldOutcome the same way every other section
+        already does.
+        """
+        return _apply_dataclass_dict(pb, self._config.playbooks, "playbooks")
+
     def _apply_queen_oversight(self, ov: dict[str, Any]) -> None:
         """Validate and apply queen.oversight sub-section."""
         ocfg = self._config.queen.oversight
@@ -1384,6 +1396,8 @@ class ConfigManager:
             "test",
             "coordination",
             "jira",
+            # P4b: playbook synthesis loop tuning
+            "playbooks",
             # Consumed by _apply_scalars
             "workers",
             "provider",
@@ -1449,6 +1463,8 @@ class ConfigManager:
             result.merge_section("coordination", self._apply_coordination(body["coordination"]))
         if "jira" in body:
             result.merge_section("jira", self._apply_jira(body["jira"]))
+        if "playbooks" in body:
+            result.merge_section("playbooks", self._apply_playbooks(body["playbooks"]))
         advanced_outcome = self._apply_advanced(body)
         # ``advanced`` is a virtual section — its keys live at the
         # body's top level (port, trust_proxy, etc.), so the consumed

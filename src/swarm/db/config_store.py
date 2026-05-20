@@ -24,6 +24,7 @@ from swarm.config.models import (
     JiraConfig,
     NotifyConfig,
     OversightConfig,
+    PlaybookConfig,
     ProviderTuning,
     QueenConfig,
     ResourceConfig,
@@ -58,6 +59,10 @@ _JSON_KEYS = {
     "task_buttons",
     "custom_llms",
     "provider_overrides",
+    # P4b: playbook synthesis loop config. All fields primitive so the
+    # serializer is a straight dataclasses.asdict; the load path uses
+    # _parse_playbook_config to defend against unknown / removed fields.
+    "playbooks",
 }
 
 # Scalar config keys
@@ -280,6 +285,10 @@ _DATACLASS_BLOBS: dict[str, tuple[str, type]] = {
     "test": ("test", TestConfig),
     "terminal": ("terminal", TerminalConfig),
     "resources": ("resources", ResourceConfig),
+    # P4b: playbook synthesis tuning knobs. All-primitive dataclass so
+    # the generic _parse_json_dataclass handles it without a custom
+    # parser. Unknown / removed keys are dropped silently in that helper.
+    "playbooks": ("playbooks", PlaybookConfig),
 }
 _BUTTON_BLOBS: dict[str, tuple[str, type]] = {
     "tool_buttons": ("tool_buttons", ToolButtonConfig),

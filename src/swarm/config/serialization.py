@@ -12,6 +12,7 @@ import yaml
 from swarm.config.models import (
     ConfigError,
     HiveConfig,
+    PlaybookConfig,
     ProviderTuning,
     QueenConfig,
     StateThresholds,
@@ -71,6 +72,28 @@ def _serialize_test(t: TestConfig) -> dict[str, Any]:
         "auto_resolve_delay": t.auto_resolve_delay,
         "report_dir": t.report_dir,
         "auto_complete_min_idle": t.auto_complete_min_idle,
+    }
+
+
+def _serialize_playbooks(p: PlaybookConfig) -> dict[str, Any]:
+    """Serialize PlaybookConfig. P4b: full primitive set, no nested types.
+
+    Every field is included unconditionally because the DB layer reads
+    this whole dict back through _parse_json_dataclass and silent-drop
+    bugs in this chain are exactly what the audit warns against.
+    """
+    return {
+        "enabled": p.enabled,
+        "eligible_task_types": list(p.eligible_task_types),
+        "min_resolution_chars": p.min_resolution_chars,
+        "max_synth_per_hour": p.max_synth_per_hour,
+        "auto_promote_uses": p.auto_promote_uses,
+        "auto_promote_winrate": p.auto_promote_winrate,
+        "prune_min_uses": p.prune_min_uses,
+        "prune_max_winrate": p.prune_max_winrate,
+        "consolidation_interval_seconds": p.consolidation_interval_seconds,
+        "dedupe_similarity_threshold": p.dedupe_similarity_threshold,
+        "install_as_native_skills": p.install_as_native_skills,
     }
 
 
@@ -211,6 +234,11 @@ def _serialize_optional(config: HiveConfig, data: dict[str, Any]) -> None:
     _serialize_llms_optional(config, data)
     _serialize_terminal_optional(config, data)
     data["test"] = _serialize_test(config.test)
+    # P4b: playbook tuning. Always serialized — config_store reads from
+    # the _JSON_KEYS set and silently drops anything that isn't in the
+    # outgoing payload, so we surface it unconditionally even when the
+    # operator hasn't touched the defaults.
+    data["playbooks"] = _serialize_playbooks(config.playbooks)
     if config.trust_proxy:
         data["trust_proxy"] = config.trust_proxy
     if config.tunnel_domain:
