@@ -149,6 +149,7 @@
         switchPlaybookFilter: function(el) { switchPlaybookFilter(el.dataset.pbStatus); },
         showPlaybookEvents: function(el) { showPlaybookEvents(el.dataset.pbName); },
         hidePlaybookEvents: function() { hidePlaybookEvents(); },
+        ccMobileFocus: function(el) { ccMobileFocus(el.dataset.ccFocus); },
         toggleResourcePopover: function(el, e) { e.stopPropagation(); toggleResourcePopover(); },
         toggleBottomPanel: function() { toggleBottomPanel(); },
         toggleFocusMode: function() { toggleFocusMode(); },
@@ -10091,6 +10092,11 @@
             badge.textContent = actionable ? String(actionable) : '';
             badge.setAttribute('data-count', String(actionable));
         }
+        // P5: mirror the count into the mobile focus toggle button so a
+        // phone operator sees pending-attention without having to switch
+        // panels first.
+        var mobileBadge = el('cc-mobile-focus-att-count');
+        if (mobileBadge) mobileBadge.textContent = actionable ? '(' + actionable + ')' : '';
         if (!list) return;
         // Preserve in-progress operator state: if any reply box is open
         // OR focus is inside the attention list (typing), skip this
@@ -10462,6 +10468,33 @@
     function ccQueenRefresh() {
         try { if (window.mountQueenEmbed) window.mountQueenEmbed(); } catch (_) {}
     }
+
+    // P5: Mobile focus toggle — under 600px the Command Center grid shows
+    // ONE panel at a time (Queen or Attention). The button below the
+    // command-center flips a body class that the CSS keys off of. We
+    // remember the choice in localStorage so re-render doesn't reset it.
+    var _CC_FOCUS_KEY = 'swarm.cc.mobileFocus';
+    function ccMobileFocus(target) {
+        // 'attention' | 'queen'; anything else defaults to attention since
+        // that's where new escalations / messages land — the more time-
+        // sensitive surface on a phone.
+        var focus = (target === 'queen') ? 'queen' : 'attention';
+        try { localStorage.setItem(_CC_FOCUS_KEY, focus); } catch (_) {}
+        document.body.classList.toggle('cc-focus-attention', focus === 'attention');
+        document.body.classList.toggle('cc-focus-queen', focus === 'queen');
+        document.querySelectorAll('[data-cc-focus]').forEach(function(btn) {
+            var on = btn.dataset.ccFocus === focus;
+            btn.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+    }
+    window.ccMobileFocus = ccMobileFocus;
+    // Initialize from prior choice (default attention) on page load —
+    // matters even on desktop so a phone-rotate or window-resize down
+    // honors the stored preference instead of randomly defaulting.
+    try {
+        var _ccStored = (localStorage.getItem(_CC_FOCUS_KEY) || 'attention');
+        ccMobileFocus(_ccStored);
+    } catch (_) { ccMobileFocus('attention'); }
 
     var CC_HANDLERS = {
         ccReplyStart: ccReplyStart,

@@ -2497,8 +2497,39 @@
             }
             .cc-attention, .cc-ask-queen, .cc-digest-strip { grid-column: 1; grid-row: auto; }
             .cc-col-resize { display: none; }
-            #cc-queen-strip { font-size: 0.65rem !important; gap: 0.5rem !important; }
+            /* Queen status strip wraps instead of shrinking; was 0.65rem !important
+               which became unreadable on phone. P5: bump to 0.75rem and allow wrap. */
+            #cc-queen-strip {
+                font-size: 0.75rem !important; gap: 0.4rem 0.75rem !important;
+                flex-wrap: wrap !important;
+            }
             #cc-qs-session-wrap { display: none !important; }
+        }
+        /* P5: mobile focus toggle, hidden on tablet+. Lets the operator pick
+           Queen OR Attention at full height — getting both stacked at 50/50
+           on a phone makes both unusable. */
+        .cc-mobile-focus { display: none; gap: 0.4rem; padding: 0 0.5rem 0.5rem; }
+        .cc-mobile-focus-btn { flex: 1; min-height: 44px; }
+        .cc-mobile-focus-btn[aria-selected="true"] {
+            background: var(--lavender); color: var(--hive-bg); border-color: var(--lavender);
+        }
+        @media (max-width: 600px) {
+            .cc-mobile-focus { display: flex; }
+            /* body.cc-focus-attention shows ONLY the Attention panel; symmetric for Queen */
+            body.cc-focus-attention .cc-ask-queen { display: none; }
+            body.cc-focus-queen .cc-attention { display: none; }
+            /* Queen action buttons: 2 columns at this width so they're tappable */
+            .cc-queen-actions {
+                display: grid !important;
+                grid-template-columns: 1fr 1fr;
+                gap: 0.3rem;
+            }
+            .cc-queen-actions .btn { min-height: 44px; }
+            /* Attention card body: remove the 4em clamp so full message reads */
+            .cc-attention-card-body { max-height: none !important; }
+            .cc-attention-card-detail { max-height: none !important; }
+            /* Keep the Queen terminal usefully tall when focused */
+            body.cc-focus-queen .cc-queen-term-holder { min-height: 280px; }
         }
         #cc-queen-strip.cc-qs-visible { display: flex !important; }
         .cc-qs-item { display: inline-flex; align-items: center; white-space: nowrap; }

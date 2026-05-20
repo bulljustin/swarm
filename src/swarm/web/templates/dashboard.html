@@ -126,6 +126,13 @@
                  Sibling of detail-body so worker-selection innerHTML stomps
                  don't wipe it out. JS toggles visibility based on focus. -->
             <div class="command-center panel-body" id="command-center">
+                <!-- P5: mobile focus toggle — visible only at <=600px so the
+                     operator can pick which panel to see at full height instead
+                     of getting half-and-half of both crushed into a tiny phone. -->
+                <div class="cc-mobile-focus" id="cc-mobile-focus" role="tablist">
+                    <button class="btn btn-sm cc-mobile-focus-btn" data-action="ccMobileFocus" data-cc-focus="attention" role="tab" aria-selected="true">Attention <span id="cc-mobile-focus-att-count">·</span></button>
+                    <button class="btn btn-sm cc-mobile-focus-btn" data-action="ccMobileFocus" data-cc-focus="queen" role="tab" aria-selected="false">Queen</button>
+                </div>
                 <div class="command-center-grid">
                     <!-- Today's digest (thin strip spanning both columns) -->
                     <div class="cc-digest-strip" id="cc-digest-body">

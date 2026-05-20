@@ -10,6 +10,33 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.20.6] - 2026-05-20
+
+### Features
+
+- **Mobile Queen dashboard rescue — P5 of the editor UX series.** The
+  Command Center stacked at 900px and then never adapted further; on a
+  phone (~390px) it was effectively unusable — the Queen action row
+  crushed eight buttons into one cramped line, the status strip
+  shrunk to 0.65rem to fit, and the Attention card body clipped
+  worker messages at 4em. P5 adds a `<600px` breakpoint that:
+  switches the layout into a one-panel-at-a-time mode controlled by a
+  new tab strip above the grid (Attention / Queen) that lets the
+  operator pick which surface gets the full screen height — Attention
+  defaults if there's pending work, Queen otherwise, and the choice
+  persists in localStorage so a re-render doesn't reset it; Queen
+  action buttons render as a 2-column grid with 44px tap targets;
+  status strip wraps to multiple lines at 0.75rem instead of
+  shrinking to unreadable; Attention card body / detail lose the 4em
+  max-height so escalation messages render in full; Queen terminal
+  holds a `min-height: 280px` when focused so the PTY isn't tiny. The
+  Attention focus button mirrors the pending-attention count in its
+  label so the operator sees what's waiting before flipping panels.
+
+### Changes
+
+### Fixes
+
 ## [2026.5.20.5] - 2026-05-20
 
 ### Features
