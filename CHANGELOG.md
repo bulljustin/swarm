@@ -10,6 +10,25 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.20.15] - 2026-05-20
+
+### Fixes
+
+- **Playbooks tab: one-row-per-card layout.** Follow-up to `.14`'s
+  compact analytics — the cards themselves still rendered 3 rows
+  deep each (title row + trigger row + Promote/Retire button row),
+  so 23 candidate playbooks looked like a wall of identical-looking
+  buttons. Restructured the card to a single row: status icon +
+  title (ellipsis-truncated, full text on hover) on the left;
+  status badge + scope + win/uses/prov + Promote/Retire all
+  right-aligned. Trigger snippet moved to the events-timeline
+  modal (open by clicking the title). Roughly 2× the density —
+  3 playbooks visible in the space that used to hold 1.5. Below
+  900 px the row wraps to two rows (title above, meta + actions
+  below) so phone widths stay readable. Dropped the per-mover
+  panel scrollbar from `.14` since the top-3 entries always fit
+  without it.
+
 ## [2026.5.20.14] - 2026-05-20
 
 ### Changes

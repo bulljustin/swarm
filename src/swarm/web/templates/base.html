@@ -255,7 +255,9 @@
            the stat tiles on wide screens, wraps below on narrow. Much
            shorter mover lists (top 3) keep the band height bounded. */
         .pb-analytics-detail { display: flex; flex-wrap: wrap; gap: 0.75rem; font-size: 0.7rem; flex: 1 1 auto; min-width: 0; }
-        .pb-mover-list { flex: 1 1 180px; min-width: 0; max-height: 5.5em; overflow-y: auto; }
+        /* Top 3 movers fit without an internal scrollbar; the earlier
+           5.5em cap with overflow-y looked busy in the operator screenshot. */
+        .pb-mover-list { flex: 1 1 180px; min-width: 0; }
         .pb-mover-title { font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.15rem; }
         .pb-mover-row { display: flex; justify-content: space-between; padding: 0.1rem 0; gap: 0.4rem; }
         .pb-mover-name { color: var(--lavender); cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -280,6 +282,20 @@
         .pb-event-meta { color: var(--muted); flex: 1; }
         .pb-playbook-row .task-title { cursor: pointer; }
         .pb-playbook-row .task-title:hover { text-decoration: underline; }
+        /* One-row-per-playbook layout (operator follow-up after the
+           previous compact pass still left buttons on a second row). */
+        .pb-row-inner { display: flex; align-items: center; gap: 0.6rem; width: 100%; min-width: 0; }
+        .pb-row-left { display: flex; align-items: center; gap: 0.4rem; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+        .pb-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .pb-row-right { display: flex; align-items: center; gap: 0.4rem; flex: 0 0 auto; }
+        .pb-row-right .conf-badge { font-size: 0.65rem; }
+        .pb-row-right .text-xs { white-space: nowrap; }
+        /* Stack to two rows when the row gets too narrow for everything inline. */
+        @media (max-width: 900px) {
+            .pb-row-inner { flex-wrap: wrap; }
+            .pb-row-title { white-space: normal; overflow: visible; text-overflow: clip; }
+            .pb-row-right { width: 100%; justify-content: flex-end; }
+        }
         /* --- Layout --- */
         .modal-padding { padding: 1rem; flex: 1; overflow-y: auto; min-height: 0; }
         .modal-footer {

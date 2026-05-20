@@ -1606,6 +1606,11 @@
         }
         var order = { active: 0, candidate: 1, retired: 2 };
         filtered.sort(function(a, b) { return (order[a.status] || 3) - (order[b.status] || 3); });
+        // One row per playbook. Title left-aligned with status icon; meta
+        // (scope · win% · uses · prov) + actions right-aligned. Trigger
+        // line + provenance list moved to the events modal so they don't
+        // double the row height for every card. Operator screenshot
+        // (2026-05-20) flagged 23 candidate rows each 3-deep as 'a mess.'
         var html = '';
         for (var i = 0; i < filtered.length; i++) {
             var p = filtered[i];
@@ -1617,24 +1622,25 @@
                 : '⊘';
             var prov = (p.provenance_task_ids || []).length;
             html += '<div class="task-item pb-playbook-row" data-playbook="' + escapeHtml(p.name) + '">';
-            html += '<div class="flex-center gap-sm">';
-            html += '<span class="' + sc + ' fw-bold">' + si + '</span>';
-            // Title is now click-to-open-events-timeline.
-            html += '<span class="task-title" data-action="showPlaybookEvents" data-pb-name="' + escapeHtml(p.name) + '">' + escapeHtml(p.title || p.name) + '</span>';
+            html += '<div class="pb-row-inner">';
+            html += '<span class="pb-row-left">';
+            html += '<span class="' + sc + ' fw-bold">' + si + '</span> ';
+            // Title click opens the events-timeline modal (P4a behaviour
+            // preserved). Truncates with ellipsis when too long; full
+            // text on hover via title attribute.
+            html += '<span class="task-title pb-row-title" data-action="showPlaybookEvents" data-pb-name="' + escapeHtml(p.name) + '" title="' + escapeHtml(p.title || p.name) + '">' + escapeHtml(p.title || p.name) + '</span>';
+            html += '</span>';
+            html += '<span class="pb-row-right">';
             html += '<span class="conf-badge ' + sc + '" style="background:var(--panel);border:1px solid var(--border)">' + escapeHtml(p.status) + '</span>';
             html += '<span class="text-muted text-xs">' + escapeHtml(p.scope || 'global') + '</span>';
             html += '<span class="text-muted text-xs">win ' + Math.round((p.winrate || 0) * 100) + '% · uses ' + (p.uses || 0) + ' · prov ' + prov + '</span>';
-            html += '</div>';
-            if (p.trigger) {
-                html += '<div class="text-muted text-sm mt-sm">' + escapeHtml(p.trigger) + '</div>';
-            }
-            html += '<div class="flex-center gap-sm mt-sm">';
             if (p.status === 'candidate') {
                 html += '<button class="btn btn-sm btn-approve" onclick="playbookAction(\'promote\',\'' + escapeHtml(p.name) + '\')">Promote</button>';
             }
             if (p.status !== 'retired') {
                 html += '<button class="btn btn-sm btn-secondary" onclick="playbookAction(\'retire\',\'' + escapeHtml(p.name) + '\')">Retire</button>';
             }
+            html += '</span>';
             html += '</div></div>';
         }
         el.innerHTML = html;
