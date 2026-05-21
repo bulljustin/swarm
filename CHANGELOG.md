@@ -10,6 +10,29 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.21.4] - 2026-05-21
+
+### Fixes
+
+- **Web Share Target was 403'ing on real iOS / Android shares.** Hot on
+  the heels of `.21.3` — the operator tried it and got "Origin
+  rejected." Root cause: iOS Safari and Android Chrome send Web
+  Share Target POSTs with `Origin: null` (because the share is
+  initiated by the OS share sheet, not by a page). Our CSRF
+  middleware rejects any cross-origin mutating request, including
+  the `null` origin.
+
+  Fix: exempt `/share-receive` from the origin check. The session
+  cookie still travels with the PWA — and the session-auth
+  middleware still runs — so we trust the cookie as the auth
+  signal. The X-Requested-With check (applied only to `/api/*` and
+  `/action/*` paths) doesn't apply to `/share-receive` anyway, so
+  no further bypass needed.
+
+  Verified by replaying the iOS POST shape via curl with
+  `Origin: null` — server now returns 303 → `/?share=<id>` instead
+  of 403.
+
 ## [2026.5.21.3] - 2026-05-21
 
 ### Features

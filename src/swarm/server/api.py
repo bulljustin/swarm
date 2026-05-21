@@ -151,10 +151,18 @@ async def _config_auth_middleware(
 async def _csrf_middleware(
     request: web.Request, handler: Callable[[web.Request], Awaitable[web.StreamResponse]]
 ) -> web.StreamResponse:
-    """Reject cross-origin mutating requests."""
+    """Reject cross-origin mutating requests.
+
+    ``/share-receive`` is exempt from the origin check because the OS
+    share sheet (iOS / Android Web Share Target) initiates the POST,
+    not a page — Origin lands as ``null``. The session cookie still
+    travels with the PWA so the session-auth middleware still gates
+    access; we trust the cookie as the auth signal.
+    """
     if request.method in ("POST", "PUT", "DELETE"):
-        if (resp := check_origin_or_error(request)) is not None:
-            return resp
+        if request.path != "/share-receive":
+            if (resp := check_origin_or_error(request)) is not None:
+                return resp
         if (
             request.path.startswith("/api/") or request.path.startswith("/action/")
         ) and not request.headers.get("X-Requested-With"):
