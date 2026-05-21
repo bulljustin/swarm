@@ -10973,6 +10973,17 @@
             var on = btn.dataset.ccFocus === focus;
             btn.setAttribute('aria-selected', on ? 'true' : 'false');
         });
+        // Operator follow-up (2026-05-21): the mobile focus toggle was
+        // not updating localStorage.swarm.lastActiveWorker, so a share
+        // taken while viewing the Queen panel ended up routing to
+        // whatever sidebar worker was last clicked (often 'swarm').
+        // Treat Queen-focus as "the Queen is now my active terminal"
+        // so the share-target flow routes screenshots into her PTY.
+        // Don't write anything for attention-focus — that surface
+        // spans all workers, so the last sidebar selection should win.
+        if (focus === 'queen') {
+            try { localStorage.setItem('swarm.lastActiveWorker', 'queen'); } catch (_) {}
+        }
     }
     window.ccMobileFocus = ccMobileFocus;
     // Initialize from prior choice (default attention) on page load —

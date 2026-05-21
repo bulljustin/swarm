@@ -10,6 +10,33 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.21.7] - 2026-05-21
+
+### Fixes
+
+- **CC Queen focus toggle now updates `lastActiveWorker`.** Operator
+  follow-up: shared a screenshot while looking at the Queen panel
+  (via the mobile Attention/Queen focus toggle) and it routed to
+  the `swarm` worker, not the Queen. Pattern: the
+  `localStorage.swarm.lastActiveWorker` value was only written by
+  `selectWorker()` — the sidebar click handler. The mobile CC focus
+  toggle was a separate mechanism that just flipped a body CSS
+  class to show/hide panels; it never told the share-target flow
+  "the Queen is your active terminal now."
+
+  `ccMobileFocus()` now writes `'queen'` to `lastActiveWorker` when
+  the operator picks Queen focus. The attention-focus path
+  intentionally doesn't write — the Attention panel spans all
+  workers (it's the inbound-escalations surface), so a share while
+  attention is focused should fall back to whichever sidebar
+  worker was last clicked.
+
+### Features
+
+### Changes
+
+### Fixes
+
 ## [2026.5.21.6] - 2026-05-21
 
 ### Fixes
