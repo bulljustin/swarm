@@ -2574,22 +2574,45 @@
             background: var(--lavender); color: var(--hive-bg); border-color: var(--lavender);
         }
         @media (max-width: 600px) {
-            .cc-mobile-focus { display: flex; }
+            .cc-mobile-focus { display: flex; justify-content: flex-start; }
             /* body.cc-focus-attention shows ONLY the Attention panel; symmetric for Queen */
             body.cc-focus-attention .cc-ask-queen { display: none; }
             body.cc-focus-queen .cc-attention { display: none; }
-            /* Queen action buttons: 2 columns at this width so they're tappable */
+            /* Focus toggle buttons (Attention/Queen) — content-sized rather
+               than each claiming 50% of the row. Operator (2026-05-21):
+               'the queen and attention buttons are huge.' Keeps the 44px
+               touch min-height so they're still tappable. */
+            .cc-mobile-focus-btn {
+                flex: 0 0 auto;
+                min-height: 44px;
+                padding: 0.4rem 0.8rem;
+            }
+            /* Queen action buttons — content-sized + wrap. Was a 2-col
+               grid where every button claimed 50% of the screen (so
+               'Refresh' had the same footprint as 'Clear Session').
+               Operator wanted 'as wide as they need to be so more fit on
+               one line.' min-height 44px still satisfies the touch
+               target; widths now hug the text. */
             .cc-queen-actions {
-                display: grid !important;
-                grid-template-columns: 1fr 1fr;
+                display: flex !important;
+                flex-wrap: wrap;
                 gap: 0.3rem;
             }
-            .cc-queen-actions .btn { min-height: 44px; }
+            .cc-queen-actions .btn {
+                flex: 0 0 auto;
+                min-height: 44px;
+                padding: 0.4rem 0.7rem;
+            }
             /* Attention card body: remove the 4em clamp so full message reads */
             .cc-attention-card-body { max-height: none !important; }
             .cc-attention-card-detail { max-height: none !important; }
             /* Keep the Queen terminal usefully tall when focused */
             body.cc-focus-queen .cc-queen-term-holder { min-height: 280px; }
+            /* Operator (2026-05-21): worker-search input + state filter
+               chips above the worker list eat space on a phone where the
+               worker list is short anyway. Hide them. The workers
+               themselves stay visible + tappable in the sidebar. */
+            .worker-search-bar { display: none !important; }
 
             /* Mobile QA fix-up (2026-05-20 findings doc):
                P5 — drop the "operator command center" subtitle on phone;

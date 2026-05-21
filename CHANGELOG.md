@@ -10,6 +10,37 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.21.2] - 2026-05-21
+
+### Fixes
+
+- **Mobile dashboard tighter — three operator complaints addressed.**
+  - **Worker search + state filter chips hidden** under 600 px. They
+    were eating vertical space on a phone where the worker list is
+    short anyway and the workers themselves are visible / tappable
+    right below.
+  - **Focus toggle buttons (Attention / Queen) sized to content** —
+    they were `flex: 1` so each claimed half the row width, which
+    the operator called "huge." Now `flex: 0 0 auto` + 0.4/0.8 rem
+    padding. Still satisfies the 44 px touch min-height.
+  - **Queen action buttons wrap inline instead of locking to a
+    2-column grid.** Was `display: grid; grid-template-columns:
+    1fr 1fr` so every button (Refresh / Continue / 1 / 2 /
+    Get Latest / Clear / Kill / Revive) claimed 50% of the screen.
+    Operator: "they should only be as wide as they need to be so
+    more fit on one line." Now `display: flex; flex-wrap: wrap`
+    + content-sized buttons. Six fit per row instead of two; same
+    44 px touch target preserved on each.
+
+  All three changes are pure CSS under `@media (max-width: 600px)`.
+  Verified via Playwright at 390×844 — header is now ~50 px shorter
+  (no worker search bar), focus toggle compact, action row holds
+  5 buttons in one line where the old grid held 2.
+
+### Features
+
+### Changes
+
 ## [2026.5.21] - 2026-05-21
 
 ### Features
