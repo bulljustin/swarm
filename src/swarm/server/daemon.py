@@ -2088,7 +2088,11 @@ class SwarmDaemon(EventEmitter):
         from swarm.server.messages import build_task_message
 
         worker_prov = get_provider(self._require_worker(worker_name).provider_name)
-        msg = build_task_message(task, supports_slash_commands=worker_prov.supports_slash_commands)
+        msg = build_task_message(
+            task,
+            supports_slash_commands=worker_prov.supports_slash_commands,
+            plan_mode_for_user_requests=self.config.drones.user_request_plan_mode,
+        )
         if message:
             msg = f"{msg}\n\nQueen context: {message}"
 
@@ -2255,6 +2259,18 @@ class SwarmDaemon(EventEmitter):
         except Exception:
             _log.warning("spawn_handoff_task: create failed for %s", recipient, exc_info=True)
             return False
+        # Tag the originating worker so the dispatch path treats this as a
+        # worker-to-worker handoff (skips the user-request plan-mode gate
+        # added 2026-05-22). Without this, every auto-handoff would gate
+        # behind plan approval and stall the inter-worker watcher's whole
+        # point — getting a stuck recipient unstuck without operator help.
+        if sender and sender != "?":
+            try:
+                self.edit_task(task.id, source_worker=sender, actor="drone:inter-worker-handoff")
+            except Exception:
+                _log.warning(
+                    "spawn_handoff_task: source_worker tag failed for %s", task.id, exc_info=True
+                )
         try:
             return await self.assign_and_start_task(
                 task.id, recipient, actor="drone:inter-worker-handoff"

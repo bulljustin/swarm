@@ -145,6 +145,16 @@ class DroneConfig:
     # into the condition string ("...or stop after N turns...").
     native_goal_enabled: bool = True
     native_goal_max_turns: int = 25
+    # Plan-mode gate for user-request tasks: when True (default), the
+    # dispatch path prepends a plan-mode preamble to tasks originating
+    # from Jira sync, email import, or the operator dashboard (i.e.
+    # ``SwarmTask.source_worker`` empty). The worker investigates
+    # read-only, presents a plan via Claude Code's ExitPlanMode, and
+    # parks in WAITING until the operator approves from the dashboard.
+    # Worker-to-worker handoffs (``source_worker`` set) always bypass
+    # — that peer already reasoned about the work. Set False to revert
+    # to the legacy fire-and-forget dispatch behavior for all tasks.
+    user_request_plan_mode: bool = True
     # Auto-assign project-affinity floor (task #341): when neither the
     # deterministic project-affinity scorer nor the headless Queen reach
     # this confidence on a task, the assigner parks the task in backlog

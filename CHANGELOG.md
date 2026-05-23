@@ -10,6 +10,33 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.23] - 2026-05-23
+
+### Features
+
+- **Plan-mode gate for user-request tasks.** Tasks originating from a
+  user channel (Jira sync, email import, or the operator dashboard —
+  i.e. anything where `SwarmTask.source_worker` is empty) now ship
+  with a plan-mode preamble prepended to the dispatch message. The
+  worker is instructed to investigate read-only, present a concrete
+  plan via Claude Code's `ExitPlanMode`, and park in `WAITING` until
+  the operator approves from the dashboard. After approval the worker
+  executes the agreed plan. Worker-to-worker handoffs (cross-project
+  tasks, MCP `swarm_create_task` with a sender, and the inter-worker
+  auto-handoff drone — now correctly tagged with `source_worker`) skip
+  the gate entirely: the originating worker has already done the
+  reasoning, so a second plan round would just slow the swarm. Wired
+  through a single chokepoint in `build_task_message`
+  (`src/swarm/server/messages.py`); the preamble explicitly warns
+  workers not to fire `/feature` / `/fix-and-ship` skills or call
+  `swarm_complete_task` before approval. The behavior is gated by
+  `DroneConfig.user_request_plan_mode` (default `True`) — set to
+  `False` in `swarm.yaml` to revert to legacy fire-and-forget dispatch.
+
+### Changes
+
+### Fixes
+
 ## [2026.5.21.8] - 2026-05-21
 
 ### Changes

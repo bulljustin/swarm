@@ -38,6 +38,59 @@ _COMPLETION_INSTRUCTIONS = """\
 When done, use the swarm_complete_task MCP tool with a brief resolution summary.
 If the task originated from another worker, send them a swarm_send_message with your findings."""
 
+# Plan-mode gate for user-request tasks. The rule: tasks where
+# ``SwarmTask.source_worker`` is empty came from a user channel (Jira sync,
+# email import, operator dashboard) and get a plan-approval gate prepended.
+# Tasks created by another worker (cross-project handoff, MCP
+# ``swarm_create_task`` with ``source_worker`` set, or the auto-handoff drone)
+# bypass — that peer already reasoned about the work, so a second plan-mode
+# round would just slow the swarm down.
+#
+# Workers cooperate with this by calling Claude Code's ``ExitPlanMode`` tool,
+# which surfaces the plan in the PTY and parks the worker in WAITING until
+# the operator approves from the dashboard. The mechanism is already wired:
+# ``server/routes/workers.py`` detects "plan mode on" prompts, and the
+# interactive Queen has plan-presentation handling at
+# ``queen/queen.py``. No new approval UI is required.
+_PLAN_MODE_PREAMBLE = """\
+This task came from a user request (Jira ticket, email, or the operator dashboard). \
+Use plan mode BEFORE making any changes:
+
+1. Read the task description below and any linked context.
+2. Investigate read-only — open relevant files, search the codebase, check git \
+history, verify assumptions against the real system if external (database, \
+third-party API, CRM, etc.).
+3. Call the ExitPlanMode tool with a concrete proposed approach: what you'll \
+change, which files, what tests you'll add, what the failure modes are, and \
+what you've ruled out.
+4. WAIT for the operator to approve the plan from the dashboard.
+5. After approval, execute the plan as agreed.
+
+DO NOT edit files, run mutating shell commands, invoke skills, or call \
+swarm_complete_task before plan approval. If the task body below invokes a \
+skill like /feature or /fix-and-ship, wrap the plan around the skill \
+invocation — don't run the skill yet. Worker-to-worker handoffs skip this \
+gate; this preamble appears because the task came from a user channel.
+
+--- TASK ---
+"""
+
+
+def requires_plan_approval(task: SwarmTask, *, enabled: bool = True) -> bool:
+    """Tasks from user channels (no peer worker source) require a plan gate.
+
+    Returns ``True`` when the task originated from the operator, the Jira
+    sync, or the email import (i.e. ``source_worker`` is empty) AND the
+    feature is enabled via ``DroneConfig.user_request_plan_mode``.
+
+    Returns ``False`` when another worker created the task (``source_worker``
+    set) — cross-project handoffs and MCP ``swarm_create_task`` calls — or
+    when the operator disabled the gate globally.
+    """
+    if not enabled:
+        return False
+    return not bool(task.source_worker)
+
 
 def _attachment_hint(path: str) -> str:
     """Return a one-line instruction telling the worker how to read this file.
@@ -116,7 +169,12 @@ def attachment_lines(task: SwarmTask) -> str:
     return "\n".join(lines)
 
 
-def build_task_message(task: SwarmTask, *, supports_slash_commands: bool = True) -> str:
+def build_task_message(
+    task: SwarmTask,
+    *,
+    supports_slash_commands: bool = True,
+    plan_mode_for_user_requests: bool = True,
+) -> str:
     """Build a message string describing a task for a worker.
 
     If the task type has a dedicated Claude Code skill (e.g. ``/feature``),
@@ -126,6 +184,12 @@ def build_task_message(task: SwarmTask, *, supports_slash_commands: bool = True)
 
     When *supports_slash_commands* is False (non-Claude providers), skill
     invocations are skipped and inline workflow instructions are used instead.
+
+    When *plan_mode_for_user_requests* is True (default), tasks originating
+    from a user channel (Jira/email/operator — i.e. ``source_worker`` empty)
+    get a plan-mode preamble prepended so the worker investigates read-only
+    and presents a plan for operator approval before making changes. Worker-
+    to-worker handoffs always skip the gate.
 
     Attachments are always listed on separate lines (never squished into
     the skill command's quoted argument) so the worker can see and read them.
@@ -141,31 +205,35 @@ def build_task_message(task: SwarmTask, *, supports_slash_commands: bool = True)
         atts = attachment_lines(task)
         if atts:
             msg = f"{msg}{atts}"
-        return msg + completion
+        body = msg + completion
+    else:
+        # Fallback: inline workflow instructions (CHORE, unknown types).
+        prefix = f"Task #{task.number}: " if task.number else "Task: "
+        parts = [f"{prefix}{task.title}"]
+        if task.description:
+            parts.append(f"\n{task.description}")
+        atts = attachment_lines(task)
+        if atts:
+            parts.append(atts)
+        if task.tags:
+            parts.append(f"\nTags: {', '.join(task.tags)}")
+        # Source metadata (inline path)
+        source_parts: list[str] = []
+        if task.jira_key:
+            source_parts.append(f"Jira: {task.jira_key}")
+        if task.source_email_id:
+            source_parts.append(f"Email: {task.source_email_id}")
+        if source_parts:
+            parts.append(f"\nSource: {', '.join(source_parts)}")
+        workflow = get_workflow_instructions(task.task_type)
+        if workflow:
+            parts.append(f"\n{workflow}")
+        parts.append(completion)
+        body = "\n".join(parts)
 
-    # Fallback: inline workflow instructions (CHORE, unknown types).
-    prefix = f"Task #{task.number}: " if task.number else "Task: "
-    parts = [f"{prefix}{task.title}"]
-    if task.description:
-        parts.append(f"\n{task.description}")
-    atts = attachment_lines(task)
-    if atts:
-        parts.append(atts)
-    if task.tags:
-        parts.append(f"\nTags: {', '.join(task.tags)}")
-    # Source metadata (inline path)
-    source_parts: list[str] = []
-    if task.jira_key:
-        source_parts.append(f"Jira: {task.jira_key}")
-    if task.source_email_id:
-        source_parts.append(f"Email: {task.source_email_id}")
-    if source_parts:
-        parts.append(f"\nSource: {', '.join(source_parts)}")
-    workflow = get_workflow_instructions(task.task_type)
-    if workflow:
-        parts.append(f"\n{workflow}")
-    parts.append(completion)
-    return "\n".join(parts)
+    if requires_plan_approval(task, enabled=plan_mode_for_user_requests):
+        body = _PLAN_MODE_PREAMBLE + body
+    return body
 
 
 # Native /goal: the provider's evaluator only judges what's already in the

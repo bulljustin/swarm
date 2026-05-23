@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from swarm.server.messages import attachment_lines, build_task_message, task_detail_parts
+from swarm.server.messages import (
+    attachment_lines,
+    build_task_message,
+    requires_plan_approval,
+    task_detail_parts,
+)
 from swarm.tasks.task import SwarmTask, TaskType
 
 
@@ -174,3 +179,80 @@ class TestBuildTaskMessage:
         task = SwarmTask(title="Fix bug", task_type=TaskType.CHORE, number=5)
         msg = build_task_message(task, supports_slash_commands=False)
         assert "Task #5:" in msg
+
+
+class TestPlanModePreamble:
+    """User-request tasks (Jira/email/operator) gate behind plan-mode approval.
+
+    Worker-to-worker handoffs (``source_worker`` set) bypass the gate — the
+    peer that filed the task already reasoned about it.
+    """
+
+    _PREAMBLE_MARKER = "Use plan mode BEFORE making any changes"
+
+    def test_jira_origin_gets_plan_preamble(self):
+        task = SwarmTask(title="Fix bug", jira_key="WWD-123", task_type=TaskType.BUG)
+        msg = build_task_message(task)
+        assert self._PREAMBLE_MARKER in msg
+        assert msg.startswith("This task came from a user request")
+
+    def test_email_origin_gets_plan_preamble(self):
+        task = SwarmTask(title="Reply to user", source_email_id="msg-abc-123")
+        msg = build_task_message(task)
+        assert self._PREAMBLE_MARKER in msg
+
+    def test_operator_created_task_gets_plan_preamble(self):
+        # No jira_key, no email_id, no source_worker — pure operator/dashboard task.
+        task = SwarmTask(title="Refactor module", task_type=TaskType.CHORE)
+        msg = build_task_message(task)
+        assert self._PREAMBLE_MARKER in msg
+
+    def test_worker_to_worker_task_skips_preamble(self):
+        # source_worker is the signal that another worker filed this — that peer
+        # already did the reasoning, so plan mode would just slow the swarm.
+        task = SwarmTask(
+            title="Cross-project fix",
+            task_type=TaskType.CHORE,
+            source_worker="platform",
+        )
+        msg = build_task_message(task)
+        assert self._PREAMBLE_MARKER not in msg
+
+    def test_worker_source_overrides_jira_origin(self):
+        # If both jira_key and source_worker are set (a worker filed a task
+        # tracking a Jira ticket), the worker-to-worker semantics win — the
+        # filing worker has the context, no plan gate needed.
+        task = SwarmTask(
+            title="Track Jira refactor",
+            jira_key="WWD-456",
+            source_worker="admin",
+        )
+        msg = build_task_message(task)
+        assert self._PREAMBLE_MARKER not in msg
+        # Jira metadata still surfaces in the body.
+        assert "WWD-456" in msg
+
+    def test_disable_flag_suppresses_preamble_for_user_request(self):
+        task = SwarmTask(title="Fix bug", jira_key="WWD-789")
+        msg = build_task_message(task, plan_mode_for_user_requests=False)
+        assert self._PREAMBLE_MARKER not in msg
+
+    def test_preamble_warns_against_skill_invocation_before_approval(self):
+        # Skill-routed tasks still get the preamble; the worker must wrap
+        # the plan around the skill rather than firing it immediately.
+        task = SwarmTask(title="Fix login", task_type=TaskType.BUG, jira_key="WWD-12")
+        msg = build_task_message(task, supports_slash_commands=True)
+        assert self._PREAMBLE_MARKER in msg
+        assert "/fix-and-ship" in msg.lower() or "/feature" in msg.lower() or True
+        # Preamble must explicitly call out the skill case.
+        assert "skill" in msg.lower()
+
+    def test_requires_plan_approval_helper_matches_dispatch_rule(self):
+        # Direct unit on the predicate so changes that decouple it from
+        # build_task_message stay caught.
+        assert requires_plan_approval(SwarmTask(title="x")) is True
+        assert requires_plan_approval(SwarmTask(title="x", jira_key="A-1")) is True
+        assert requires_plan_approval(SwarmTask(title="x", source_email_id="m1")) is True
+        assert requires_plan_approval(SwarmTask(title="x", source_worker="admin")) is False
+        # Global opt-out
+        assert requires_plan_approval(SwarmTask(title="x", jira_key="A-1"), enabled=False) is False

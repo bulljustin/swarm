@@ -680,6 +680,12 @@ class TestWorkflowTemplates:
         result = get_workflow_instructions(TaskType.BUG)
         assert "General Task" in result
 
+    # NOTE: these tests assert the *body* shape of the dispatched task message
+    # (skill prefix, inline workflow, attachment placement). The plan-mode
+    # preamble added for user-request tasks (2026-05-22) is covered separately
+    # in tests/test_messages.py::TestPlanModePreamble — these pass
+    # ``plan_mode_for_user_requests=False`` to keep the body assertions sharp.
+
     def test_build_task_message_skill(self):
         """BUG/FEATURE/VERIFY tasks produce a skill invocation."""
         from swarm.server.messages import build_task_message
@@ -690,7 +696,7 @@ class TestWorkflowTemplates:
             task_type=TaskType.BUG,
             tags=["auth"],
         )
-        msg = build_task_message(task)
+        msg = build_task_message(task, plan_mode_for_user_requests=False)
         assert msg.startswith("/fix-and-ship ")
         assert "Login button broken" in msg
         assert "Clicking login does nothing" in msg
@@ -704,7 +710,7 @@ class TestWorkflowTemplates:
             description="Toggle in settings",
             task_type=TaskType.FEATURE,
         )
-        msg = build_task_message(task)
+        msg = build_task_message(task, plan_mode_for_user_requests=False)
         assert msg.startswith("/feature ")
         assert "Add dark mode" in msg
 
@@ -716,7 +722,7 @@ class TestWorkflowTemplates:
             description="Verify login redirects correctly",
             task_type=TaskType.VERIFY,
         )
-        msg = build_task_message(task)
+        msg = build_task_message(task, plan_mode_for_user_requests=False)
         assert msg.startswith("/verify ")
         assert "Check auth flow" in msg
 
@@ -729,7 +735,7 @@ class TestWorkflowTemplates:
             description="Add setup instructions",
             task_type=TaskType.CHORE,
         )
-        msg = build_task_message(task)
+        msg = build_task_message(task, plan_mode_for_user_requests=False)
         assert msg.startswith("Task: Update README")
         assert "General Task" in msg
 
@@ -741,7 +747,7 @@ class TestWorkflowTemplates:
             task_type=TaskType.BUG,
             attachments=["/tmp/log.txt", "/tmp/screenshot.png"],
         )
-        msg = build_task_message(task)
+        msg = build_task_message(task, plan_mode_for_user_requests=False)
         # Skill command is on the first line
         first_line = msg.split("\n")[0]
         assert first_line.startswith("/fix-and-ship ")
@@ -762,7 +768,7 @@ class TestWorkflowTemplates:
             task_type=TaskType.CHORE,
             attachments=["/tmp/spec.pdf"],
         )
-        msg = build_task_message(task)
+        msg = build_task_message(task, plan_mode_for_user_requests=False)
         assert "/tmp/spec.pdf" in msg
         assert "Attachments" in msg
 
@@ -816,7 +822,11 @@ class TestWorkflowTemplates:
             description="Users can't log in",
             task_type=TaskType.BUG,
         )
-        msg = build_task_message(task, supports_slash_commands=False)
+        msg = build_task_message(
+            task,
+            supports_slash_commands=False,
+            plan_mode_for_user_requests=False,
+        )
         assert "/fix-and-ship" not in msg
         assert "Fix login crash" in msg
         assert "Workflow" in msg

@@ -69,6 +69,39 @@ Authors of new assignment paths should go through `assign_and_start_task` (not
 `task_board.assign` or the lower-level `assign_task`) unless they specifically
 want queue-only semantics.
 
+### Plan-mode gate for user-request tasks
+
+User-channel tasks (Jira sync, email import, operator dashboard — anything
+where `SwarmTask.source_worker` is empty) ship with a **plan-mode preamble**
+prepended to the dispatch message by `build_task_message`
+(`src/swarm/server/messages.py`). The worker is instructed to investigate
+read-only, present a concrete plan via Claude Code's `ExitPlanMode` tool,
+and park in `WAITING` until the operator approves from the dashboard. The
+preamble explicitly tells the worker not to fire skills (`/feature`,
+`/fix-and-ship`, etc.) or call `swarm_complete_task` before approval.
+
+Worker-to-worker handoffs **bypass** the gate — `source_worker` set on the
+task is the signal. That covers cross-project tasks, MCP
+`swarm_create_task(target_worker=…)` calls (which tag `source_worker` via
+`_handle_create_task` in `mcp/tools.py`), and the inter-worker auto-handoff
+drone (`_spawn_handoff_task` in `daemon.py` was updated to tag
+`source_worker=sender` so this path correctly bypasses the gate — without
+that tag every auto-handoff would stall behind plan approval and defeat
+the watcher's whole purpose).
+
+Approval surface is intentionally the **existing** Claude Code plan-mode
+UX (worker enters `WAITING`, operator opens the worker view, approves
+in-PTY). No new approval UI was added. Dashboard already detects "plan
+mode on" prompts (`server/routes/workers.py`) and the interactive Queen
+already has plan-presentation handling (`queen/queen.py`).
+
+Gated by `DroneConfig.user_request_plan_mode` (default `True`). Set to
+`False` in `swarm.yaml` under `drones:` to revert to legacy fire-and-
+forget dispatch for all tasks. Re-nudges from the IdleWatcher / inter-
+worker watcher go through `send_to_worker` (raw text), not
+`build_task_message`, so they never re-apply the preamble — by design,
+since a re-nudge on a started task should not reset its plan.
+
 ### Queen message-surface elevation
 
 Workers **cannot auto-interrupt each other** — that's a deliberate hierarchy
