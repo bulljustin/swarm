@@ -10,6 +10,61 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.25.13] - 2026-05-25
+
+### Features
+
+### Changes
+
+### Fixes
+
+- **State classifier wasn't recognising the modern Claude Code 2.x
+  spinner format.** Operator reported `platform` showing
+  `RESTING for 3m` in the sidebar while the worker was actively
+  running a 16+ minute background task (live PTY tail had
+  `✻ Sautéed for 16m 13s`). The `_RE_SUBAGENT_ACTIVE` regex in
+  `src/swarm/providers/claude.py` only knew about legacy Braille
+  spinners (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) followed by a verb + `...` (three dots).
+
+  When the stuck-BUZZING safety net (task #236) fires after 10 min of
+  BUZZING state, it checks the narrow tail (last 5 lines) for an
+  active-turn signal. Modern Claude Code's spinner uses sparkle
+  glyphs and `…` (U+2026), so the narrow-tail check returned False
+  and the safety net incorrectly flipped BUZZING → RESTING. The
+  primary classifier still saw `esc to interrupt` in the wider tail
+  and called BUZZING — but after the safety-net flip the state went
+  back to RESTING until the next state change. The dashboard's
+  "RESTING for Nm" came from that flip.
+
+  Fix: updated `_RE_SUBAGENT_ACTIVE` to match the canonical Claude
+  Code 2.x spinner character set per the source mirror
+  (kdxsydq/ClaudeCode, src/components/Spinner/utils.ts):
+
+      macOS:        · ✢ ✳ ✶ ✻ ✽
+      Linux/Win:    · ✢ * ✶ ✻ ✽
+      Ghostty:      · ✢ ✳ ✶ ✻ *
+
+  The union (`· ✢ ✳ ✶ ✻ ✽ *`) plus the legacy Braille set is now
+  accepted, followed by a verb + termination (`…`, `...`, or
+  `for <digit>...`). `·` and `*` are ambiguous on their own
+  (separators, list bullets) so the verb + termination is required
+  to avoid false-positives on lines like
+  `auto mode on · esc to interrupt`. Verb is `\w+` rather than a
+  fixed list — Claude Code rotates verbs constantly (Cooking,
+  Sautéed, Brewing, Verifying, Shipping, …) and pinning the list
+  would break with each Claude Code release.
+
+  4 new regression tests in `tests/test_pilot.py::TestStuckBuzzingSafetyNet`
+  pin the modern formats: live `✻ Sautéed for 16m 13s` capture,
+  `…` (U+2026) ellipsis variant, all 7 canonical spinner glyphs,
+  and the false-positive guard for ambiguous-glyph-without-suffix.
+
+  Same root cause explains the "slow to update" feel on mobile — the
+  safety net was repeatedly flipping the worker RESTING within minutes
+  of long background work starting, then the next poll saw the actual
+  BUZZING state and flipped back. Now the spinner is recognised on
+  every poll while the work runs.
+
 ## [2026.5.25.12] - 2026-05-25
 
 ### Features

@@ -2659,6 +2659,55 @@ class TestStuckBuzzingSafetyNet:
         pilot, _, _ = pilot_setup
         assert pilot._state_tracker._STUCK_BUZZING_THRESHOLD >= 300.0
 
+    # --- Claude Code 2.x spinner formats (regression for stuck-BUZZING flip) ---
+    #
+    # Live capture from the platform worker (Sautéed for 16m+ on a
+    # background task) was being mis-classified RESTING by the safety
+    # net because none of the active-turn signals matched the modern
+    # Claude Code TUI. Canonical spinner glyphs per the Claude Code
+    # source mirror (kdxsydq/ClaudeCode):
+    #   macOS:        · ✢ ✳ ✶ ✻ ✽
+    #   Linux/Win:    · ✢ * ✶ ✻ ✽
+    #   Ghostty:      · ✢ ✳ ✶ ✻ *
+    # Each cycles forward+backward as the spinner animates. The verb
+    # is followed by either ``…`` (U+2026), three dots, or ``for Nm Ns``
+    # elapsed-time text.
+
+    def test_detects_modern_sparkle_spinner_with_elapsed_time(self, pilot_setup) -> None:
+        """The exact shape observed on the platform worker."""
+        pilot, _, _ = pilot_setup
+        tail = "some line\n  ✻ Sautéed for 16m 13s\n❯\n"
+        assert pilot._state_tracker._has_active_turn_signal(tail) is True
+
+    def test_detects_sparkle_spinner_with_unicode_ellipsis(self, pilot_setup) -> None:
+        """Modern Claude uses ``…`` (U+2026) instead of ``...`` (three dots)."""
+        pilot, _, _ = pilot_setup
+        tail = "✻ Verifying… (5s)\n❯\n"
+        assert pilot._state_tracker._has_active_turn_signal(tail) is True
+
+    def test_detects_all_canonical_spinner_glyphs(self, pilot_setup) -> None:
+        """Cover every glyph in the source-mirror's spinner set."""
+        pilot, _, _ = pilot_setup
+        for glyph in ("·", "✢", "✳", "✶", "✻", "✽", "*"):
+            tail = f"{glyph} Cooking…\n"
+            assert pilot._state_tracker._has_active_turn_signal(tail) is True, (
+                f"glyph {glyph!r} should be recognized as spinner"
+            )
+
+    def test_does_not_match_ambiguous_glyph_without_verb_suffix(self, pilot_setup) -> None:
+        """The ``·`` and ``*`` glyphs appear in many non-spinner contexts
+        (separators, list bullets). Require the verb + ellipsis/elapsed
+        suffix so we don't false-positive."""
+        pilot, _, _ = pilot_setup
+        # Auto-mode footer with `·` as a separator — must NOT match.
+        tail = "  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt\n"
+        # This actually MATCHES via the existing "esc to interrupt"
+        # check, which is intentional — but let's prove the spinner
+        # check itself doesn't false-positive on the bare `·`:
+        from swarm.providers.claude import _RE_SUBAGENT_ACTIVE
+
+        assert _RE_SUBAGENT_ACTIVE.search(tail) is None
+
 
 @pytest.mark.asyncio
 async def test_dead_worker_cleanup_removes_suspension(pilot_setup, monkeypatch):

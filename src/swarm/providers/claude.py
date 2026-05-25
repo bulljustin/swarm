@@ -31,10 +31,39 @@ _RE_CURSOR_OPTION = re.compile(r"^\s*[>❯]\s*\d+\.", re.MULTILINE)
 _RE_OTHER_OPTION = re.compile(r"^\s+\d+\.", re.MULTILINE)
 _RE_HINTS = re.compile(r"(\? for shortcuts|ctrl\+t to hide)", re.IGNORECASE)
 _RE_EMPTY_PROMPT = re.compile(r"^[>❯]\s*$")
+# Subagent / spinner activity in the Claude Code 2.x TUI.
+#
+# Three signals — any one means "Claude is actively working":
+#
+#   1. ``↓ N tokens``        — subagent finishing, token-pull indicator
+#   2. ``thought for N``     — extended-thinking indicator
+#   3. ``<glyph> <Verb><suffix>`` — animated spinner
+#
+# The spinner glyph set is the official Claude Code character cycle per
+# the source mirror (kdxsydq/ClaudeCode, src/components/Spinner/utils.ts):
+#
+#     macOS:        · ✢ ✳ ✶ ✻ ✽
+#     Linux/Win:    · ✢ * ✶ ✻ ✽
+#     Ghostty:      · ✢ ✳ ✶ ✻ *
+#
+# The animation plays forward + backward, so any of the union characters
+# can appear on screen on any given poll. ``·`` and ``*`` are ambiguous
+# on their own (separators, list bullets), so we require the trailing
+# verb + termination (``…``, ``...``, or `` for <digit>...``) to avoid
+# false positives on lines like ``auto mode on · esc to interrupt``.
+#
+# The verb itself is intentionally ``\w+`` rather than a fixed list —
+# Claude Code rotates verbs constantly (Cooking, Sautéed, Brewing,
+# Wrangling, Tinkering, Verifying, Shipping, Generating, etc.) and
+# pinning the list would break with each Claude Code release.
+#
+# Legacy Braille glyphs (``⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏``) are kept so older Claude
+# Code versions, generic-provider workers, and other CLIs that share
+# the npm cli-spinners ``dots`` set still classify correctly.
 _RE_SUBAGENT_ACTIVE = re.compile(
     r"↓\s*[\d.]+k?\s*tokens"
     r"|thought for \d+"
-    r"|[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+\w+\.\.\.",
+    r"|[·✢✳✶✻✽*⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+\w+(?:…|\.\.\.|\s+for\s+\d)",
     re.IGNORECASE,
 )
 _RE_ACCEPT_EDITS = re.compile(r">>\s*accept edits on", re.IGNORECASE)
