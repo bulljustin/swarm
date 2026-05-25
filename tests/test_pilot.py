@@ -2708,6 +2708,54 @@ class TestStuckBuzzingSafetyNet:
 
         assert _RE_SUBAGENT_ACTIVE.search(tail) is None
 
+    # --- Operator-reported screenshots (2026-05-25, post-.13) ---
+    #
+    # Three real-world cases the operator flagged after the initial .13
+    # fix. Each test names the screenshot's content and pins the signal
+    # path that should carry it to BUZZING so future regex tightenings
+    # can't silently drop coverage.
+
+    def test_screenshot_foreground_spinner_with_multi_word_verb(self, pilot_setup) -> None:
+        """``Verifying end-to-end + shipping…`` — multi-word verb between
+        glyph and ellipsis. The verb-phrase part doesn't match the
+        glyph+\\w+ portion of the regex (Verifying is followed by
+        " end-to-end..." not the termination), but the ``thought for 8s``
+        tail does — proving the multiple-signal design holds even when
+        the spinner verb is a phrase."""
+        pilot, _, _ = pilot_setup
+        tail = (
+            "Calling swarm... (ctrl+o to expand)\n"
+            "⊹ Verifying end-to-end + shipping… "
+            "(5m 57s · ↓ 13.5k tokens · thought for 8s)\n"
+            "❯\n"
+        )
+        assert pilot._state_tracker._has_active_turn_signal(tail) is True
+
+    def test_screenshot_background_shell_running(self, pilot_setup) -> None:
+        """``✳ Sautéed for 30m 16s · 1 shell still running`` — operator's
+        primary concern: shell-backed work keeps the worker BUZZING even
+        though Claude itself is foreground-idle. Two signals fire here:
+        the ``✳`` spinner + ``for 30m 16s`` elapsed time AND the
+        ``1 shell still running`` background banner. Either is
+        sufficient on its own."""
+        pilot, _, _ = pilot_setup
+        tail = (
+            "When you want to start building, /feature @docs/specs/bugsy-memory.md\n"
+            "✳ Sautéed for 30m 16s · 1 shell still running\n"
+            "❯ /feature @docs/specs/bugsy-memory.md\n"
+            "  ⏵⏵ auto mode on · 1 shell · ↓ to manage\n"
+        )
+        assert pilot._state_tracker._has_active_turn_signal(tail) is True
+
+    def test_screenshot_middle_dot_spinner_with_ellipsis(self, pilot_setup) -> None:
+        """``· Osmosing… (7m 54s · ↑ 25.4k tokens · thought for 4s)`` —
+        middle-dot spinner frame (one of the canonical glyphs the .13
+        fix added). Verifies the `·` glyph isn't rejected as ambiguous
+        when it's followed by a real verb + ellipsis."""
+        pilot, _, _ = pilot_setup
+        tail = "9 passed in 0.38s\n· Osmosing… (7m 54s · ↑ 25.4k tokens · thought for 4s)\n"
+        assert pilot._state_tracker._has_active_turn_signal(tail) is True
+
 
 @pytest.mark.asyncio
 async def test_dead_worker_cleanup_removes_suspension(pilot_setup, monkeypatch):

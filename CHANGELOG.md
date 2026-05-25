@@ -10,6 +10,38 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.25.14] - 2026-05-25
+
+### Features
+
+- **Add 3 regression tests for operator-reported BUZZING-detection
+  screenshots.** After the 2026.5.25.13 fix shipped, the operator
+  surfaced three additional PTY tail patterns to verify:
+  - Foreground spinner with a multi-word verb phrase
+    (``⊹ Verifying end-to-end + shipping… (5m 57s · ↓ 13.5k tokens
+    · thought for 8s)``). The glyph+verb portion of the regex doesn't
+    match a multi-word verb, but the ``thought for 8s`` clause does
+    — proves the multiple-signal design holds when the verb is a
+    phrase or the glyph isn't in the canonical set.
+  - Background shell running
+    (``✳ Sautéed for 30m 16s · 1 shell still running`` plus
+    ``⏵⏵ auto mode on · 1 shell · ↓ to manage``). Two signals fire:
+    the ``✳`` spinner + ``for 30m 16s`` elapsed time AND the
+    ``1 shell still running`` background banner. Either is sufficient.
+  - Middle-dot spinner with ellipsis
+    (``· Osmosing… (7m 54s · ↑ 25.4k tokens · thought for 4s)``).
+    Verifies the ``·`` glyph isn't rejected as ambiguous when
+    followed by a real verb + ellipsis.
+  All three tests pass under the .13 regex, documenting that the
+  shipped fix already covers these patterns. The tests live in
+  ``tests/test_pilot.py::TestStuckBuzzingSafetyNet`` and are named
+  after their source screenshots so future regex tightenings can be
+  cross-referenced. Full suite: 4601 passed.
+
+### Changes
+
+### Fixes
+
 ## [2026.5.25.13] - 2026-05-25
 
 ### Features
