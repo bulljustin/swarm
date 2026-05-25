@@ -15,6 +15,14 @@ _log = get_logger("db.buzz_store")
 
 _DEFAULT_MAX_AGE_DAYS = 30
 
+# Explicit column list — what ``_row_to_dict`` actually consumes.
+# Pinning these avoids accidentally inflating query results when the
+# buzz_log schema gains a column (added defensively after an audit
+# flagged the SELECT *).
+_BUZZ_COLS = (
+    "id, timestamp, action, worker_name, detail, category, is_notification, metadata, repeat_count"
+)
+
 
 class BuzzStore(BaseStore):
     """Buzz log persistence backed by the buzz_log table in swarm.db.
@@ -56,7 +64,7 @@ class BuzzStore(BaseStore):
     def load_recent(self, limit: int = 200) -> list[dict[str, Any]]:
         """Load the most recent entries (for startup hydration)."""
         rows = self._db.fetchall(
-            "SELECT * FROM buzz_log ORDER BY timestamp DESC LIMIT ?",
+            f"SELECT {_BUZZ_COLS} FROM buzz_log ORDER BY timestamp DESC LIMIT ?",
             (limit,),
         )
         result = []
@@ -96,7 +104,10 @@ class BuzzStore(BaseStore):
             params.append(until)
 
         where = " AND ".join(conditions) if conditions else "1=1"
-        sql = f"SELECT * FROM buzz_log WHERE {where} ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        sql = (
+            f"SELECT {_BUZZ_COLS} FROM buzz_log "
+            f"WHERE {where} ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        )
         params.extend([limit, offset])
         rows = self._db.fetchall(sql, tuple(params))
         return [_row_to_dict(r) for r in rows]
@@ -104,9 +115,9 @@ class BuzzStore(BaseStore):
     def search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         """Free-text search across detail and worker_name fields."""
         rows = self._db.fetchall(
-            "SELECT * FROM buzz_log "
-            "WHERE detail LIKE ? OR worker_name LIKE ? "
-            "ORDER BY timestamp DESC LIMIT ?",
+            f"SELECT {_BUZZ_COLS} FROM buzz_log "
+            f"WHERE detail LIKE ? OR worker_name LIKE ? "
+            f"ORDER BY timestamp DESC LIMIT ?",
             (f"%{query}%", f"%{query}%", limit),
         )
         return [_row_to_dict(r) for r in rows]

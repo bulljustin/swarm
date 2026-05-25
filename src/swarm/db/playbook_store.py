@@ -30,6 +30,16 @@ _log = get_logger("db.playbook_store")
 
 _WORD_RE = re.compile(r"[A-Za-z0-9_]+")
 
+# Explicit column list — what ``_row_to_pb`` actually consumes.
+# Pinning these avoids accidentally inflating query results when the
+# playbooks schema gains a column (added defensively after an audit
+# flagged the SELECT *).
+_PB_COLS = (
+    "id, name, title, scope, trigger, body, provenance_task_ids, "
+    "source_worker, confidence, uses, wins, losses, status, version, "
+    "content_hash, created_at, updated_at, last_used_at, retired_reason"
+)
+
 
 def _fts_query(text: str) -> str:
     """Turn arbitrary text into a safe fts5 OR-query of quoted tokens."""
@@ -84,7 +94,7 @@ class PlaybookStore(BaseStore):
         was a dup because the returned ``id`` is not ``pb.id``.
         """
         existing = self._db.fetchone(
-            "SELECT * FROM playbooks WHERE content_hash = ?", (pb.content_hash,)
+            f"SELECT {_PB_COLS} FROM playbooks WHERE content_hash = ?", (pb.content_hash,)
         )
         if existing is not None:
             incumbent = _row_to_pb(existing)
@@ -101,7 +111,9 @@ class PlaybookStore(BaseStore):
                 worker=pb.source_worker,
                 detail="exact-duplicate folded",
             )
-            refreshed = self._db.fetchone("SELECT * FROM playbooks WHERE id = ?", (incumbent.id,))
+            refreshed = self._db.fetchone(
+                f"SELECT {_PB_COLS} FROM playbooks WHERE id = ?", (incumbent.id,)
+            )
             return _row_to_pb(refreshed)
 
         pb.id = pb.id or uuid.uuid4().hex
@@ -295,11 +307,11 @@ class PlaybookStore(BaseStore):
     # -- reads ---------------------------------------------------------
 
     def get(self, name: str) -> Playbook | None:
-        row = self._db.fetchone("SELECT * FROM playbooks WHERE name = ?", (name,))
+        row = self._db.fetchone(f"SELECT {_PB_COLS} FROM playbooks WHERE name = ?", (name,))
         return _row_to_pb(row) if row else None
 
     def get_by_id(self, pb_id: str) -> Playbook | None:
-        row = self._db.fetchone("SELECT * FROM playbooks WHERE id = ?", (pb_id,))
+        row = self._db.fetchone(f"SELECT {_PB_COLS} FROM playbooks WHERE id = ?", (pb_id,))
         return _row_to_pb(row) if row else None
 
     def list(
@@ -309,7 +321,7 @@ class PlaybookStore(BaseStore):
         status: PlaybookStatus | None = None,
         limit: int = 200,
     ) -> list[Playbook]:
-        sql = "SELECT * FROM playbooks"
+        sql = f"SELECT {_PB_COLS} FROM playbooks"
         clauses: list[str] = []
         params: list[object] = []
         if scope is not None:
@@ -346,7 +358,8 @@ class PlaybookStore(BaseStore):
         if not rows:
             like = f"%{query.strip()}%"
             rows = self._db.fetchall(
-                "SELECT * FROM playbooks WHERE title LIKE ? OR trigger LIKE ? OR body LIKE ? "
+                f"SELECT {_PB_COLS} FROM playbooks "
+                "WHERE title LIKE ? OR trigger LIKE ? OR body LIKE ? "
                 "ORDER BY updated_at DESC LIMIT ?",
                 (like, like, like, limit * 4),
             )
