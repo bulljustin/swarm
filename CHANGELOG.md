@@ -10,6 +10,72 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.25.8] - 2026-05-25
+
+### Features
+
+### Changes
+
+- **DronePilot full clean — migrate remaining sub-handler delegations.**
+  Final pass after the targeted state-tracker migration in 2026.5.25.7.
+  Migrated 17 delegation methods + 17 `@property` shims:
+  - DecisionExecutor: `_run_decision_sync`, `_execute_deferred_actions`,
+    `_had_substantive_action`, `_emit_decisions`, `_deferred_actions`,
+    `_revive_loop_max`, `_revive_loop_window`.
+  - TaskLifecycle: `record_completion_verdict`,
+    `_cleanup_stale_proposed_completions`, `_check_task_completions`,
+    `_auto_assign_tasks`, `_auto_complete_min_idle`,
+    `_COMPLETION_REPROPOSE_COOLDOWN`, `_saw_completion`,
+    `_needs_assign_check`.
+  - PressureManager: `_suspend_workers`, `on_pressure_changed`,
+    `_resume_pressure_suspended`, `_suspend_on_critical_pressure`,
+    `_pressure_level`, `_suspended_for_pressure`.
+  - DirectiveExecutor: `_execute_directives`.
+  - OversightHandler: `_oversight_cycle`.
+  - PollDispatcher (state + methods): `_cleanup_dead_workers`,
+    `_poll_once_locked`, `_compute_backoff`, `_handle_poll_error`,
+    `_loop`, `_running`, `_task`, `_idle_streak`, `_poll_lock`,
+    `_poll_failures`, `_consecutive_errors`.
+  Migrated callers across 9 files: `src/swarm/drones/poll_dispatcher.py`,
+  `src/swarm/drones/backoff.py` (docstring ref), `src/swarm/server/daemon.py`,
+  `src/swarm/server/proposals.py`, `src/swarm/server/resource_monitor.py`,
+  `tests/test_pilot.py` (~80 sites), `tests/test_daemon.py`,
+  `tests/test_terminal_approval.py`, `tests/test_testing_integration.py`.
+  Plus `monkeypatch.setattr(pilot, "_poll_once_locked", ...)` repointed at
+  `pilot._dispatcher.poll_once_locked` and the `DronePilot._compute_backoff`
+  docstring ref in `backoff.py` updated to `PollDispatcher._compute_backoff`.
+  Method-name mismatches reconciled mid-pass: handler-side names dropped
+  the leading underscore for several (`oversight_cycle`, `loop`,
+  `poll_once_locked`, `execute_directives`).
+
+  **Kept as load-bearing pilot facade API:** `wake_worker`,
+  `mark_operator_continue`, `note_park_rejected` (oversight-coordination
+  glue), `clear_proposed_completion` (used by `TaskManager` which takes
+  `pilot` as a dep and mocks `spec=DronePilot` in tests), `_safe_worker_action`
+  + the `_classify_worker_state` lambda (`DirectiveExecutor` init-time
+  callbacks that need late binding because `_state_tracker` /
+  `_decision_exec` are constructed later in `__init__`).
+
+  Internal `pilot.py` updated: `get_diagnostics`, `is_loop_running`,
+  `needs_restart`, `restart_loop`, `toggle` read dispatcher state directly
+  (`self._dispatcher._running` / `._task` / etc.) instead of bouncing
+  through the deleted shims. Dropped unused `MemoryPressureLevel` import.
+
+  **Bug surfaced + fixed during migration:** the test fixture for
+  `TaskManager` uses `MagicMock(spec=DronePilot)`, which restricts
+  attribute access to what's on the spec. Migrating `task_manager.py`
+  to use `pilot._task_lifecycle.clear_proposed_completion` broke 5 tests
+  (3 in `test_task_manager.py`, 2 in `test_api.py`). Restored
+  `clear_proposed_completion` as a pilot facade method and reverted the
+  `task_manager.py` change — services that take `pilot` as a dep
+  shouldn't reach into its sub-handlers. The kept-shim docstring notes
+  the rationale so future cleanups don't re-delete it.
+
+  Net: pilot.py 1118 → 716 LOC (-36%), 136 → 45 methods (-67%).
+  Full suite: 4549 passed (unchanged).
+
+### Fixes
+
 ## [2026.5.25.7] - 2026-05-25
 
 ### Features

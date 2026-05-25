@@ -136,7 +136,7 @@ class ResourceMonitor:
             )
             self._prev_pressure_level = level
             if pilot:
-                pilot.on_pressure_changed(
+                pilot._pressure_mgr.on_pressure_changed(
                     snap.pressure_level,
                     mem_pct=snap.mem_percent,
                     swap_pct=snap.swap_percent,
@@ -146,7 +146,7 @@ class ResourceMonitor:
                 notification_bus.emit_resource_pressure(level, snap.mem_percent, snap.swap_percent)
         elif level in ("high", "critical") and pilot:
             # Re-evaluate on every tick while pressure stays high
-            pilot.on_pressure_changed(
+            pilot._pressure_mgr.on_pressure_changed(
                 snap.pressure_level,
                 mem_pct=snap.mem_percent,
                 swap_pct=snap.swap_percent,

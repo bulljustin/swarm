@@ -960,7 +960,7 @@ class SwarmDaemon(EventEmitter):
         if self.pilot is None:
             return
         try:
-            self.pilot.record_completion_verdict(task_id, done, confidence)
+            self.pilot._task_lifecycle.record_completion_verdict(task_id, done, confidence)
         except AttributeError:
             # Pilot may be a test double without the method wired.
             pass

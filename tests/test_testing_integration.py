@@ -95,11 +95,11 @@ class TestProposalHook:
 
 
 class TestPilotEmitDecisions:
-    """Verify pilot._emit_decisions flag exists."""
+    """Verify pilot._decision_exec._emit_decisions flag exists."""
 
     def test_flag_defaults_false(self):
         from swarm.drones.log import DroneLog
         from swarm.drones.pilot import DronePilot
 
         pilot = DronePilot([], DroneLog())
-        assert pilot._emit_decisions is False
+        assert pilot._decision_exec._emit_decisions is False

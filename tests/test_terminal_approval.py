@@ -306,7 +306,7 @@ def test_cleanup_on_dead_worker(pilot_setup):
     pilot._state_tracker._operator_continued.add("alpha")
 
     # Directly call _cleanup_dead_workers (simulates reap after STUNG timeout)
-    pilot._cleanup_dead_workers([workers[0]])
+    pilot._dispatcher._cleanup_dead_workers([workers[0]])
 
     assert "alpha" not in pilot._state_tracker._waiting_content
     assert "alpha" not in pilot._state_tracker._drone_continued

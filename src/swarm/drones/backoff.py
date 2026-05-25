@@ -28,7 +28,7 @@ def compute_backoff(
     WAITING = 1x, BUZZING = 3x, RESTING = 3x.
 
     This is a pure function extracted from
-    :class:`~swarm.drones.pilot.DronePilot._compute_backoff` for testability.
+    :class:`~swarm.drones.pilot.PollDispatcher._compute_backoff` for testability.
     """
     cfg = config
     base = base_interval

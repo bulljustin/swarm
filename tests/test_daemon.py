@@ -3330,12 +3330,12 @@ async def test_heartbeat_no_broadcast_when_unchanged(daemon):
 async def test_heartbeat_revives_dead_pilot_loop(daemon):
     """Heartbeat watchdog should restart the pilot loop if it has died."""
     pilot = MagicMock()
-    pilot._running = True
+    pilot._dispatcher._running = True
     # Simulate a dead task
     dead_task = asyncio.Future()
     dead_task.set_result(None)  # marks as done
-    pilot._task = dead_task
-    pilot._loop = AsyncMock()
+    pilot._dispatcher._task = dead_task
+    pilot._dispatcher.loop = AsyncMock()
     daemon.pilot = pilot
 
     # Run one heartbeat iteration manually
@@ -3343,20 +3343,20 @@ async def test_heartbeat_revives_dead_pilot_loop(daemon):
     daemon.broadcast_ws = MagicMock()
 
     # The watchdog check: task is done → should restart
-    task = pilot._task
+    task = pilot._dispatcher._task
     assert task.done()
 
     # Simulate the watchdog logic from _heartbeat_loop
-    if pilot._running and (task is None or task.done()):
-        pilot._task = asyncio.create_task(pilot._loop())
+    if pilot._dispatcher._running and (task is None or task.done()):
+        pilot._dispatcher._task = asyncio.create_task(pilot._dispatcher.loop())
 
     # Verify _loop was scheduled
-    assert pilot._loop.called or not pilot._task.done()
+    assert pilot._dispatcher.loop.called or not pilot._dispatcher._task.done()
     # Cleanup
-    if not pilot._task.done():
-        pilot._task.cancel()
+    if not pilot._dispatcher._task.done():
+        pilot._dispatcher._task.cancel()
         try:
-            await pilot._task
+            await pilot._dispatcher._task
         except asyncio.CancelledError:
             pass
 

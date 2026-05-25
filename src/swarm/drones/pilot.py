@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from swarm.pty.provider import WorkerProcessProvider
     from swarm.queen.oversight import OversightMonitor
     from swarm.queen.queen import Queen
-    from swarm.resources.monitor import MemoryPressureLevel
     from swarm.tasks.board import TaskBoard
 
 _log = get_logger("drones.pilot")
@@ -382,138 +381,6 @@ class DronePilot(EventEmitter):
         """Return sorted list of workers currently suspended due to resource pressure."""
         return self._pressure_mgr.pressure_suspended_workers
 
-    # --- Backward-compat state access ---
-
-    @property
-    def _auto_complete_min_idle(self) -> float:
-        return self._task_lifecycle._auto_complete_min_idle
-
-    @_auto_complete_min_idle.setter
-    def _auto_complete_min_idle(self, value: float) -> None:
-        self._task_lifecycle._auto_complete_min_idle = value
-
-    @property
-    def _COMPLETION_REPROPOSE_COOLDOWN(self) -> int:
-        return self._task_lifecycle._COMPLETION_REPROPOSE_COOLDOWN
-
-    @_COMPLETION_REPROPOSE_COOLDOWN.setter
-    def _COMPLETION_REPROPOSE_COOLDOWN(self, value: int) -> None:
-        self._task_lifecycle._COMPLETION_REPROPOSE_COOLDOWN = value
-
-    @property
-    def _saw_completion(self) -> bool:
-        return self._task_lifecycle.saw_completion
-
-    @_saw_completion.setter
-    def _saw_completion(self, value: bool) -> None:
-        self._task_lifecycle._saw_completion = value
-
-    @property
-    def _needs_assign_check(self) -> bool:
-        return self._task_lifecycle.needs_assign_check
-
-    @_needs_assign_check.setter
-    def _needs_assign_check(self, value: bool) -> None:
-        self._task_lifecycle.needs_assign_check = value
-
-    @property
-    def _had_substantive_action(self) -> bool:
-        return self._decision_exec._had_substantive_action
-
-    @_had_substantive_action.setter
-    def _had_substantive_action(self, value: bool) -> None:
-        self._decision_exec._had_substantive_action = value
-
-    @property
-    def _emit_decisions(self) -> bool:
-        return self._decision_exec._emit_decisions
-
-    @_emit_decisions.setter
-    def _emit_decisions(self, value: bool) -> None:
-        self._decision_exec._emit_decisions = value
-
-    @property
-    def _pressure_level(self) -> str:
-        return self._pressure_mgr.pressure_level
-
-    @_pressure_level.setter
-    def _pressure_level(self, value: str) -> None:
-        self._pressure_mgr._pressure_level = value
-
-    @property
-    def _suspended_for_pressure(self) -> set[str]:
-        return self._pressure_mgr._suspended_for_pressure
-
-    @property
-    def _deferred_actions(self) -> list:
-        return self._decision_exec._deferred_actions
-
-    @_deferred_actions.setter
-    def _deferred_actions(self, value: list) -> None:
-        self._decision_exec._deferred_actions = value
-
-    @property
-    def _revive_loop_max(self) -> int:
-        return self._decision_exec._revive_loop_max
-
-    @_revive_loop_max.setter
-    def _revive_loop_max(self, value: int) -> None:
-        self._decision_exec._revive_loop_max = value
-
-    @property
-    def _revive_loop_window(self) -> float:
-        return self._decision_exec._revive_loop_window
-
-    @_revive_loop_window.setter
-    def _revive_loop_window(self, value: float) -> None:
-        self._decision_exec._revive_loop_window = value
-
-    # --- Backward-compat: dispatcher-owned state ---
-
-    @property
-    def _running(self) -> bool:
-        return self._dispatcher._running
-
-    @_running.setter
-    def _running(self, value: bool) -> None:
-        self._dispatcher._running = value
-
-    @property
-    def _task(self) -> asyncio.Task[None] | None:
-        return self._dispatcher._task
-
-    @_task.setter
-    def _task(self, value: asyncio.Task[None] | None) -> None:
-        self._dispatcher._task = value
-
-    @property
-    def _idle_streak(self) -> int:
-        return self._dispatcher._idle_streak
-
-    @_idle_streak.setter
-    def _idle_streak(self, value: int) -> None:
-        self._dispatcher._idle_streak = value
-
-    @property
-    def _poll_lock(self) -> asyncio.Lock:
-        return self._dispatcher._poll_lock
-
-    @property
-    def _poll_failures(self) -> dict[str, tuple[int, float]]:
-        return self._dispatcher._poll_failures
-
-    @_poll_failures.setter
-    def _poll_failures(self, value: dict[str, tuple[int, float]]) -> None:
-        self._dispatcher._poll_failures = value
-
-    @property
-    def _consecutive_errors(self) -> int:
-        return self._dispatcher._consecutive_errors
-
-    @_consecutive_errors.setter
-    def _consecutive_errors(self, value: int) -> None:
-        self._dispatcher._consecutive_errors = value
-
     # Class-level constants — delegate to _task_lifecycle for runtime access
     _AUTO_COMPLETE_MIN_IDLE: ClassVar[int] = 45
     _PROPOSED_COMPLETION_CLEANUP_INTERVAL: ClassVar[int] = 60
@@ -559,13 +426,14 @@ class DronePilot(EventEmitter):
 
     def get_diagnostics(self) -> dict[str, object]:
         """Return pilot health/diagnostic info for status endpoints."""
-        task = self._task
+        dispatcher = self._dispatcher
+        task = dispatcher._task
         info: dict[str, object] = {
-            "running": self._running,
+            "running": dispatcher._running,
             "enabled": self.enabled,
             "task_alive": task is not None and not task.done(),
-            "tick": self._dispatcher._tick,
-            "idle_streak": self._idle_streak,
+            "tick": dispatcher._tick,
+            "idle_streak": dispatcher._idle_streak,
             "suspended_count": len(self._suspended),
             "suspended_workers": sorted(self._suspended),
         }
@@ -710,37 +578,7 @@ class DronePilot(EventEmitter):
             drone_log=self.log,
         )
 
-    # --- Delegate to PressureManager ---
-
-    def _suspend_workers(self, names: list[str], reason: str) -> int:
-        """Mark workers as pressure-suspended."""
-        return self._pressure_mgr._suspend_workers(names, reason)
-
-    def on_pressure_changed(
-        self,
-        level: MemoryPressureLevel,
-        *,
-        mem_pct: float | None = None,
-        swap_pct: float | None = None,
-    ) -> None:
-        """Respond to a change in system resource pressure.
-
-        Passes the measured values through to the PressureManager so
-        SUSPEND/RESUMED log entries carry the mem/swap numbers that
-        triggered them (task #236). Kwargs are optional so older
-        resource-monitor implementations stay compatible.
-        """
-        self._pressure_mgr.on_pressure_changed(level, mem_pct=mem_pct, swap_pct=swap_pct)
-
-    def _resume_pressure_suspended(self) -> None:
-        """Resume workers that were suspended due to pressure."""
-        self._pressure_mgr._resume_pressure_suspended()
-
-    def _suspend_on_critical_pressure(self) -> None:
-        """Suspend SLEEPING/RESTING workers except the most recently active."""
-        self._pressure_mgr._suspend_on_critical_pressure()
-
-    # --- Delegate to WorkerStateTracker ---
+    # --- Delegate to WorkerStateTracker (kept: load-bearing pilot public API) ---
 
     def mark_operator_continue(self, name: str) -> None:
         """Record that the operator continued this worker via the dashboard button."""
@@ -750,15 +588,22 @@ class DronePilot(EventEmitter):
         """Wake a suspended worker so it's polled on the next tick."""
         return self._state_tracker.wake_worker(name)
 
-    # --- Delegate to DecisionExecutor ---
+    # --- Delegate to TaskLifecycle (kept: task_manager service facade) ---
 
-    def _run_decision_sync(self, worker: Worker, content: str, events: list | None = None) -> bool:
-        """Evaluate the drone decision for a worker (sync — actions deferred)."""
-        return self._decision_exec._run_decision_sync(worker, content, events=events)
+    def clear_proposed_completion(self, task_id: str) -> None:
+        """Remove a task from the proposed-completions tracker.
 
-    async def _execute_deferred_actions(self) -> None:
-        """Execute deferred async actions from the sync poll loop."""
-        await self._decision_exec._execute_deferred_actions()
+        Kept as a pilot facade method because :class:`TaskManager` takes
+        ``pilot`` as a constructor dependency and uses
+        ``MagicMock(spec=DronePilot)`` in tests. Reaching into
+        ``pilot._task_lifecycle`` from another service would leak the
+        pilot's sub-handler structure into its consumers and break
+        spec-based mocks. The other ``_task_lifecycle`` delegations have
+        no service-side callers and were removed.
+        """
+        self._task_lifecycle.clear_proposed_completion(task_id)
+
+    # --- Delegate to DecisionExecutor (kept: late-binding callback) ---
 
     async def _safe_worker_action(
         self,
@@ -782,11 +627,7 @@ class DronePilot(EventEmitter):
             prompt_snippet=prompt_snippet,
         )
 
-    # --- Delegate to TaskLifecycle ---
-
-    def clear_proposed_completion(self, task_id: str) -> None:
-        """Remove a task from the proposed-completions tracker."""
-        self._task_lifecycle.clear_proposed_completion(task_id)
+    # --- Park-rejection routing (oversight has the suppression window) ---
 
     def note_park_rejected(self, worker_name: str, task_id: str) -> None:
         """Operator rejected a park proposal — tell oversight to back off
@@ -794,38 +635,6 @@ class DronePilot(EventEmitter):
         window (and reset its no-progress streak)."""
         if self._oversight is not None:
             self._oversight.note_park_rejected(worker_name, task_id)
-
-    def record_completion_verdict(self, task_id: str, done: bool, confidence: float) -> None:
-        """Record Queen's latest completion verdict so the cooldown can
-        extend when the Queen is confidently sure the worker hasn't finished.
-        """
-        self._task_lifecycle.record_completion_verdict(task_id, done, confidence)
-
-    def _cleanup_stale_proposed_completions(self) -> None:
-        """Evict proposed-completion entries older than 1 hour."""
-        self._task_lifecycle._cleanup_stale_proposed_completions()
-
-    def _check_task_completions(self) -> bool:
-        """Propose completion for tasks whose assigned worker has been idle."""
-        return self._task_lifecycle._check_task_completions()
-
-    async def _auto_assign_tasks(self) -> bool:
-        """Ask Queen for assignments and emit proposals for user approval."""
-        return await self._task_lifecycle._auto_assign_tasks()
-
-    # --- Delegate to DirectiveExecutor ---
-
-    async def _execute_directives(
-        self, directives: list[dict[str, Any]], confidence: float = 0.0
-    ) -> bool:
-        """Dispatch a list of Queen directives to the appropriate handlers."""
-        return await self._directives.execute_directives(directives, confidence=confidence)
-
-    # --- Delegate to OversightHandler ---
-
-    async def _oversight_cycle(self) -> bool:
-        """Run oversight signal detection and Queen evaluation."""
-        return await self._oversight_handler.oversight_cycle()
 
     # --- Lifecycle / event registration ---
 
@@ -867,18 +676,20 @@ class DronePilot(EventEmitter):
 
     def is_loop_running(self) -> bool:
         """Check if the pilot poll loop task is currently executing."""
-        return self._running and self._task is not None and not self._task.done()
+        dispatcher = self._dispatcher
+        return dispatcher._running and dispatcher._task is not None and not dispatcher._task.done()
 
     def needs_restart(self) -> bool:
         """True when the pilot should be running but the loop task has died."""
-        return self._running and not self.is_loop_running()
+        return self._dispatcher._running and not self.is_loop_running()
 
     async def restart_loop(self) -> None:
         """Restart the poll loop task. Safe to call if already running."""
-        if self._task and not self._task.done():
-            self._task.cancel()
+        task = self._dispatcher._task
+        if task and not task.done():
+            task.cancel()
             try:
-                await self._task
+                await task
             except (asyncio.CancelledError, Exception):
                 pass
         self._dispatcher.start()
@@ -896,29 +707,10 @@ class DronePilot(EventEmitter):
         """Toggle drone actions on/off. State detection keeps running."""
         self.enabled = not self.enabled
         # Ensure the poll loop is alive even when drones are disabled
-        if self._task is None or self._task.done():
+        if self._dispatcher._task is None or self._dispatcher._task.done():
             self._dispatcher.start()
         return self.enabled
 
     async def poll_once(self) -> bool:
         """Run one poll cycle across all workers."""
         return await self._dispatcher.poll_once()
-
-    def _cleanup_dead_workers(self, dead_workers: list[Worker]) -> None:
-        """Remove dead workers from tracking and unassign their tasks."""
-        self._dispatcher._cleanup_dead_workers(dead_workers)
-
-    async def _poll_once_locked(self) -> tuple[bool, bool]:
-        """Returns (had_action, any_state_changed)."""
-        return await self._dispatcher.poll_once_locked()
-
-    def _compute_backoff(self) -> float:
-        """Compute poll interval based on worker states and idle streak."""
-        return self._dispatcher._compute_backoff()
-
-    def _handle_poll_error(self) -> None:
-        """Track consecutive poll loop errors with escalating severity."""
-        self._dispatcher._handle_poll_error()
-
-    async def _loop(self) -> None:
-        await self._dispatcher.loop()

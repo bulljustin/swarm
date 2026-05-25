@@ -83,7 +83,7 @@ class PollDispatcher:
         dead_workers: list[Worker] = []
         had_action = False
         max_poll_failures = p.drone_config.max_poll_failures
-        p._deferred_actions = []
+        p._decision_exec._deferred_actions = []
         now = time.time()
 
         for worker in list(p.workers):
@@ -131,7 +131,7 @@ class PollDispatcher:
                     had_action = True
 
         # Execute deferred async actions (send_enter, revive)
-        await p._execute_deferred_actions()
+        await p._decision_exec._execute_deferred_actions()
 
         if dead_workers:
             self._cleanup_dead_workers(dead_workers)
@@ -164,14 +164,14 @@ class PollDispatcher:
         had_action = False
         # Periodic cleanup of stale proposed-completion entries
         if self._tick > 0 and self._tick % p._PROPOSED_COMPLETION_CLEANUP_INTERVAL == 0:
-            p._cleanup_stale_proposed_completions()
+            p._task_lifecycle._cleanup_stale_proposed_completions()
         if p.enabled and p.task_board:
-            if p._check_task_completions():
+            if p._task_lifecycle._check_task_completions():
                 had_action = True
         # Auto-assign: skip when Queen has auto_assign_tasks disabled
-        p._needs_assign_check = False
+        p._task_lifecycle._needs_assign_check = False
         if p.enabled and p.task_board and p.queen and p.queen.auto_assign_tasks:
-            if await p._auto_assign_tasks():
+            if await p._task_lifecycle._auto_assign_tasks():
                 had_action = True
         # Periodic hive-coordination cycle removed (task #253 spec B).
         # Coverage is duplicated by specialized drones — see
@@ -184,7 +184,7 @@ class PollDispatcher:
             and self._tick > 0
             and self._tick % p._oversight_interval == 0
         ):
-            if await p._oversight_cycle():
+            if await p._oversight_handler.oversight_cycle():
                 had_action = True
         if await self._run_idle_watcher_sweep():
             had_action = True
@@ -272,7 +272,7 @@ class PollDispatcher:
             idle_streak=self._idle_streak,
             base_interval=p._base_interval,
             max_interval=p._max_interval,
-            pressure_level=p._pressure_level,
+            pressure_level=p._pressure_mgr._pressure_level,
             focused_workers=p._focused_workers,
             focus_interval=p._focus_interval,
         )
@@ -361,13 +361,16 @@ class PollDispatcher:
             while self._running:
                 backoff = p._base_interval
                 try:
-                    p._had_substantive_action = False
+                    p._decision_exec._had_substantive_action = False
                     p._state_tracker.any_became_active = False
                     async with self._poll_lock:
                         _had_action, _any_changed = await self.poll_once_locked()
 
                         # Track idle streak for adaptive backoff.
-                        if p._had_substantive_action or p._state_tracker.any_became_active:
+                        if (
+                            p._decision_exec._had_substantive_action
+                            or p._state_tracker.any_became_active
+                        ):
                             self._idle_streak = 0
                         else:
                             self._idle_streak += 1
@@ -385,7 +388,7 @@ class PollDispatcher:
                             p.enabled
                             and p.drone_config.auto_stop_on_complete
                             and p.task_board
-                            and p._saw_completion
+                            and p._task_lifecycle._saw_completion
                             and not p.task_board.available_tasks
                             and not p.task_board.active_tasks
                             and all(

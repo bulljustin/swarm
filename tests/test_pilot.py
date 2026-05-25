@@ -114,7 +114,7 @@ async def test_cleanup_dead_workers_removes_last_full_poll(pilot_setup):
 
     # Mark first worker as dead
     dead = [workers[0]]
-    pilot._cleanup_dead_workers(dead)
+    pilot._dispatcher._cleanup_dead_workers(dead)
 
     assert dead_name not in pilot._state_tracker._last_full_poll
     assert alive_name in pilot._state_tracker._last_full_poll
@@ -129,7 +129,7 @@ def test_cleanup_stale_proposed_completions(pilot_setup):
     pilot._proposed_completions["fresh-task"] = now
     pilot._proposed_completions["stale-task"] = now - 7200  # 2 hours old
 
-    pilot._cleanup_stale_proposed_completions()
+    pilot._task_lifecycle._cleanup_stale_proposed_completions()
 
     assert "fresh-task" in pilot._proposed_completions
     assert "stale-task" not in pilot._proposed_completions
@@ -140,7 +140,7 @@ async def test_poll_loop_error_counter(pilot_setup, monkeypatch):
     """Consecutive poll errors should increment counter and emit event at threshold."""
     pilot, workers, log = pilot_setup
     pilot.enabled = True
-    pilot._running = True
+    pilot._dispatcher._running = True
 
     events: list[int] = []
     pilot.on("poll_errors_exceeded", lambda count: events.append(count))
@@ -153,19 +153,19 @@ async def test_poll_loop_error_counter(pilot_setup, monkeypatch):
         call_count += 1
         raise RuntimeError("test error")
 
-    monkeypatch.setattr(pilot, "_poll_once_locked", _failing_poll)
+    monkeypatch.setattr(pilot._dispatcher, "poll_once_locked", _failing_poll)
 
     # Run a few iterations of the loop manually
     for _ in range(6):
         try:
-            pilot._had_substantive_action = False
+            pilot._decision_exec._had_substantive_action = False
             pilot._state_tracker.any_became_active = False
-            async with pilot._poll_lock:
-                await pilot._poll_once_locked()
+            async with pilot._dispatcher._poll_lock:
+                await pilot._dispatcher.poll_once_locked()
         except Exception:
-            pilot._handle_poll_error()
+            pilot._dispatcher._handle_poll_error()
 
-    assert pilot._consecutive_errors == 6
+    assert pilot._dispatcher._consecutive_errors == 6
     assert len(events) == 1  # emitted once at threshold=5
     assert events[0] == 5
 
@@ -175,12 +175,12 @@ async def test_poll_loop_error_counter_resets(pilot_setup):
     """Successful poll cycle should reset the error counter."""
     pilot, workers, log = pilot_setup
     pilot.enabled = True
-    pilot._consecutive_errors = 3
+    pilot._dispatcher._consecutive_errors = 3
 
     _set_workers_content(workers, content="esc to interrupt", command="claude")
     await pilot.poll_once()
 
-    assert pilot._consecutive_errors == 0
+    assert pilot._dispatcher._consecutive_errors == 0
 
 
 @pytest.mark.asyncio
@@ -226,8 +226,8 @@ async def test_revive_loop_escalates(pilot_setup, monkeypatch):
     """Workers revived too many times in a short window should escalate instead."""
     pilot, workers, log = pilot_setup
     pilot.enabled = True
-    pilot._revive_loop_max = 3
-    pilot._revive_loop_window = 60.0
+    pilot._decision_exec._revive_loop_max = 3
+    pilot._decision_exec._revive_loop_window = 60.0
 
     w = workers[0]
     # Seed revive history: 3 revives in the last 30 seconds
@@ -258,8 +258,8 @@ async def test_revive_loop_allows_after_window(pilot_setup, monkeypatch):
     """Old revives outside the window should not block new revives."""
     pilot, workers, log = pilot_setup
     pilot.enabled = True
-    pilot._revive_loop_max = 3
-    pilot._revive_loop_window = 60.0
+    pilot._decision_exec._revive_loop_max = 3
+    pilot._decision_exec._revive_loop_window = 60.0
 
     w = workers[0]
     # Seed revive history: 3 revives, but all older than 60 seconds
@@ -287,7 +287,7 @@ async def test_revive_loop_cleanup_on_dead_worker(pilot_setup, monkeypatch):
     pilot._revive_history[w.name] = [time.monotonic()]
 
     # Simulate dead worker cleanup
-    pilot._cleanup_dead_workers([w])
+    pilot._dispatcher._cleanup_dead_workers([w])
 
     assert w.name not in pilot._revive_history
 
@@ -328,7 +328,7 @@ async def test_toggle(pilot_setup):
     assert result is False
     assert not pilot.enabled
     # Poll loop should still be running for state detection
-    assert pilot._task is not None and not pilot._task.done()
+    assert pilot._dispatcher._task is not None and not pilot._dispatcher._task.done()
     # Clean up
     pilot.stop()
 
@@ -396,29 +396,29 @@ async def test_adaptive_backoff(pilot_setup):
     pilot, workers, log = pilot_setup
     pilot.enabled = True
 
-    assert pilot._idle_streak == 0
+    assert pilot._dispatcher._idle_streak == 0
 
     # All workers BUZZING, no action taken → idle streak should grow
     had_action = await pilot.poll_once()
     assert had_action is False
 
-    # Apply _loop's idle-streak logic (same as pilot._loop)
+    # Apply _loop's idle-streak logic (same as pilot._dispatcher.loop)
     if had_action:
-        pilot._idle_streak = 0
+        pilot._dispatcher._idle_streak = 0
     else:
-        pilot._idle_streak += 1
+        pilot._dispatcher._idle_streak += 1
 
-    assert pilot._idle_streak == 1
+    assert pilot._dispatcher._idle_streak == 1
 
     # Second idle poll
     had_action = await pilot.poll_once()
     assert had_action is False
     if had_action:
-        pilot._idle_streak = 0
+        pilot._dispatcher._idle_streak = 0
     else:
-        pilot._idle_streak += 1
+        pilot._dispatcher._idle_streak += 1
 
-    assert pilot._idle_streak == 2
+    assert pilot._dispatcher._idle_streak == 2
 
     # Verify backoff formula: base * 2^min(streak, 3), capped at max
     def expected_backoff(streak):
@@ -443,9 +443,9 @@ async def test_adaptive_backoff_resets_on_action(pilot_setup):
     for _ in range(3):
         had_action = await pilot.poll_once()
         assert had_action is False
-        pilot._idle_streak += 1  # mirrors _loop logic
+        pilot._dispatcher._idle_streak += 1  # mirrors _loop logic
 
-    assert pilot._idle_streak == 3
+    assert pilot._dispatcher._idle_streak == 3
 
     # Force an action (revive via dead process → STUNG → revive)
     for w in workers:
@@ -457,9 +457,9 @@ async def test_adaptive_backoff_resets_on_action(pilot_setup):
 
     # Apply _loop's reset logic
     if had_action:
-        pilot._idle_streak = 0
+        pilot._dispatcher._idle_streak = 0
 
-    assert pilot._idle_streak == 0
+    assert pilot._dispatcher._idle_streak == 0
 
 
 # ── Escalation does NOT reset backoff ─────────────────────────────────
@@ -475,9 +475,9 @@ async def test_escalation_does_not_reset_idle_streak(pilot_setup):
     for _ in range(3):
         had_action = await pilot.poll_once()
         assert had_action is False
-        pilot._idle_streak += 1
+        pilot._dispatcher._idle_streak += 1
 
-    assert pilot._idle_streak == 3
+    assert pilot._dispatcher._idle_streak == 3
 
     # Make workers STUNG with exhausted revives → ESCALATE decision
     for w in workers:
@@ -489,7 +489,7 @@ async def test_escalation_does_not_reset_idle_streak(pilot_setup):
     assert had_action is True  # escalation still counts as had_action
 
     # But _had_substantive_action should be False (escalation only)
-    assert pilot._had_substantive_action is False
+    assert pilot._decision_exec._had_substantive_action is False
 
 
 @pytest.mark.asyncio
@@ -505,7 +505,7 @@ async def test_substantive_action_resets_idle_streak(pilot_setup):
     await pilot.poll_once()  # transitions to STUNG
     had_action = await pilot.poll_once()  # STUNG → REVIVE
     assert had_action is True
-    assert pilot._had_substantive_action is True  # REVIVE is substantive
+    assert pilot._decision_exec._had_substantive_action is True  # REVIVE is substantive
 
 
 # ── Skip-decide optimization for escalated workers ────────────────────
@@ -571,12 +571,12 @@ async def test_loop_exits_on_empty_hive(monkeypatch):
     pilot.on_hive_empty(lambda: events.append("hive_empty"))
 
     pilot.enabled = True
-    pilot._running = True
+    pilot._dispatcher._running = True
     # Run _loop — should exit after workers are reaped
-    await asyncio.wait_for(pilot._loop(), timeout=2.0)
+    await asyncio.wait_for(pilot._dispatcher.loop(), timeout=2.0)
 
     assert not pilot.enabled
-    assert not pilot._running
+    assert not pilot._dispatcher._running
     assert "hive_empty" in events
     assert len(workers) == 0
 
@@ -616,9 +616,9 @@ async def test_hive_complete_emitted(monkeypatch):
     pilot.on_hive_complete(lambda: events.append("hive_complete"))
 
     pilot.enabled = True
-    pilot._running = True
+    pilot._dispatcher._running = True
     pilot.mark_completion_seen()  # simulate a task completed this session
-    await asyncio.wait_for(pilot._loop(), timeout=2.0)
+    await asyncio.wait_for(pilot._dispatcher.loop(), timeout=2.0)
 
     assert "hive_complete" in events
 
@@ -689,11 +689,11 @@ async def test_hive_complete_sets_running_false(monkeypatch):
     monkeypatch.setattr("swarm.drones.pilot.revive_worker", AsyncMock())
 
     pilot.enabled = True
-    pilot._running = True
+    pilot._dispatcher._running = True
     pilot.mark_completion_seen()  # simulate a task completed this session
-    await asyncio.wait_for(pilot._loop(), timeout=2.0)
+    await asyncio.wait_for(pilot._dispatcher.loop(), timeout=2.0)
 
-    assert not pilot._running, "_running should be False after hive_complete"
+    assert not pilot._dispatcher._running, "_running should be False after hive_complete"
     assert not pilot.needs_restart(), "watchdog should not restart after hive_complete"
 
 
@@ -724,10 +724,10 @@ async def test_hive_complete_not_triggered_on_empty_board(monkeypatch):
     pilot.on_hive_complete(lambda: events.append("hive_complete"))
 
     pilot.enabled = True
-    pilot._running = True
+    pilot._dispatcher._running = True
     # _loop() would run forever (no hive_complete exit) — use timeout to prove it
     with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(pilot._loop(), timeout=0.15)
+        await asyncio.wait_for(pilot._dispatcher.loop(), timeout=0.15)
 
     assert "hive_complete" not in events, "empty board must not trigger hive_complete"
     assert pilot.enabled, "pilot should remain enabled with empty board"
@@ -765,10 +765,10 @@ async def test_hive_complete_not_triggered_on_stale_completions(monkeypatch):
     pilot.on_hive_complete(lambda: events.append("hive_complete"))
 
     pilot.enabled = True
-    pilot._running = True
+    pilot._dispatcher._running = True
     # _loop() would run forever (stale completions don't trigger auto-stop)
     with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(pilot._loop(), timeout=0.15)
+        await asyncio.wait_for(pilot._dispatcher.loop(), timeout=0.15)
 
     assert "hive_complete" not in events, "stale completions must not trigger hive_complete"
     assert pilot.enabled, "pilot should remain enabled with stale completions"
@@ -789,8 +789,8 @@ async def test_loop_cancelled_no_error(monkeypatch):
     monkeypatch.setattr("swarm.drones.pilot.revive_worker", AsyncMock())
 
     pilot.enabled = True
-    pilot._running = True
-    task = asyncio.create_task(pilot._loop())
+    pilot._dispatcher._running = True
+    task = asyncio.create_task(pilot._dispatcher.loop())
 
     # Let it start one cycle then cancel
     await asyncio.sleep(0.05)
@@ -828,7 +828,7 @@ async def test_wait_directive_no_warning():
     logger.addHandler(handler)
 
     try:
-        result = await pilot._execute_directives(
+        result = await pilot._directives.execute_directives(
             [{"worker": "api", "action": "wait", "reason": "worker is busy"}]
         )
     finally:
@@ -903,7 +903,7 @@ async def test_circuit_breaker_trips(monkeypatch):
         await pilot.poll_once()
 
     assert len(workers) == 2  # both still alive
-    count, _ = pilot._poll_failures.get("api", (0, 0.0))
+    count, _ = pilot._dispatcher._poll_failures.get("api", (0, 0.0))
     assert count == max_failures - 1
 
     # One more poll: circuit breaker trips
@@ -913,7 +913,7 @@ async def test_circuit_breaker_trips(monkeypatch):
     assert workers[0].name == "web"
     assert len(changes) == 1  # workers_changed fired once
     # Failure counter cleaned up
-    assert "api" not in pilot._poll_failures
+    assert "api" not in pilot._dispatcher._poll_failures
 
 
 @pytest.mark.asyncio
@@ -925,12 +925,12 @@ async def test_circuit_breaker_resets_on_success(pilot_setup):
     # Seed some failures
     import time as _time
 
-    pilot._poll_failures["api"] = (3, _time.monotonic())
+    pilot._dispatcher._poll_failures["api"] = (3, _time.monotonic())
 
     await pilot.poll_once()
 
     # After successful poll, counter should be cleared
-    assert "api" not in pilot._poll_failures
+    assert "api" not in pilot._dispatcher._poll_failures
 
 
 # ── Dead worker task redistribution ─────────────────────────────────────
@@ -1022,7 +1022,7 @@ class TestTaskCompletionReproposal:
         pilot.task_board = board
         pilot.enabled = True
         # Shorten cooldown for tests
-        pilot._COMPLETION_REPROPOSE_COOLDOWN = 60
+        pilot._task_lifecycle._COMPLETION_REPROPOSE_COOLDOWN = 60
         return pilot, workers, board, log
 
     def test_first_proposal_fires(self):
@@ -1037,7 +1037,7 @@ class TestTaskCompletionReproposal:
         events = []
         pilot.on("task_done", lambda w, t, r: events.append((w.name, t.id)))
 
-        pilot._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()
         assert len(events) == 1
         assert events[0] == ("api", task.id)
 
@@ -1053,8 +1053,8 @@ class TestTaskCompletionReproposal:
         events = []
         pilot.on("task_done", lambda w, t, r: events.append(t.id))
 
-        pilot._check_task_completions()
-        pilot._check_task_completions()  # within cooldown
+        pilot._task_lifecycle._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()  # within cooldown
         assert len(events) == 1  # only fired once
 
     def test_reproposal_after_cooldown(self):
@@ -1069,13 +1069,13 @@ class TestTaskCompletionReproposal:
         events = []
         pilot.on("task_done", lambda w, t, r: events.append(t.id))
 
-        pilot._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()
         assert len(events) == 1
 
         # Simulate cooldown expiry by backdating the timestamp
         pilot._proposed_completions[task.id] = time.time() - 120  # 2 min ago, > 60s cooldown
 
-        pilot._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()
         assert len(events) == 2  # fired again
 
     def test_clear_proposed_allows_immediate_reproposal(self):
@@ -1090,12 +1090,12 @@ class TestTaskCompletionReproposal:
         events = []
         pilot.on("task_done", lambda w, t, r: events.append(t.id))
 
-        pilot._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()
         assert len(events) == 1
 
-        pilot.clear_proposed_completion(task.id)
+        pilot._task_lifecycle.clear_proposed_completion(task.id)
 
-        pilot._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()
         assert len(events) == 2
 
     def test_high_conf_not_done_extends_cooldown(self):
@@ -1113,16 +1113,16 @@ class TestTaskCompletionReproposal:
         pilot.on("task_done", lambda w, t, r: events.append(t.id))
 
         # First proposal fires normally.
-        pilot._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()
         assert len(events) == 1
 
         # Queen returns done=False with high confidence.
-        pilot.record_completion_verdict(task.id, done=False, confidence=0.95)
+        pilot._task_lifecycle.record_completion_verdict(task.id, done=False, confidence=0.95)
 
         # Simulate normal (short) cooldown expiring.
         pilot._proposed_completions[task.id] = time.time() - 120  # > 60s cooldown
         # But the high-conf-not-done backoff is 30 min — should still skip.
-        pilot._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()
         assert len(events) == 1, "high-conf-not-done should suppress re-proposal"
 
     def test_low_conf_not_done_does_not_extend_cooldown(self):
@@ -1137,13 +1137,13 @@ class TestTaskCompletionReproposal:
         events = []
         pilot.on("task_done", lambda w, t, r: events.append(t.id))
 
-        pilot._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()
         assert len(events) == 1
 
         # Low-confidence not-done — e.g. Queen uncertain, could still be done soon.
-        pilot.record_completion_verdict(task.id, done=False, confidence=0.3)
+        pilot._task_lifecycle.record_completion_verdict(task.id, done=False, confidence=0.3)
         pilot._proposed_completions[task.id] = time.time() - 120  # past short cooldown
-        pilot._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()
         assert len(events) == 2, "low-conf verdict should NOT extend the cooldown"
 
     def test_done_true_verdict_clears_backoff(self):
@@ -1158,12 +1158,12 @@ class TestTaskCompletionReproposal:
         events = []
         pilot.on("task_done", lambda w, t, r: events.append(t.id))
 
-        pilot._check_task_completions()
-        pilot.record_completion_verdict(task.id, done=False, confidence=0.95)
+        pilot._task_lifecycle._check_task_completions()
+        pilot._task_lifecycle.record_completion_verdict(task.id, done=False, confidence=0.95)
         assert task.id in pilot._task_lifecycle._completion_verdicts
 
         # Queen now confirms the task IS done.
-        pilot.record_completion_verdict(task.id, done=True, confidence=0.95)
+        pilot._task_lifecycle.record_completion_verdict(task.id, done=True, confidence=0.95)
         assert task.id not in pilot._task_lifecycle._completion_verdicts
 
     def test_high_conf_backoff_expires_eventually(self):
@@ -1176,8 +1176,8 @@ class TestTaskCompletionReproposal:
         events = []
         pilot.on("task_done", lambda w, t, r: events.append(t.id))
 
-        pilot._check_task_completions()
-        pilot.record_completion_verdict(task.id, done=False, confidence=0.95)
+        pilot._task_lifecycle._check_task_completions()
+        pilot._task_lifecycle.record_completion_verdict(task.id, done=False, confidence=0.95)
 
         # Backdate the verdict past the 30-min backoff window.
         lifecycle = pilot._task_lifecycle
@@ -1190,7 +1190,7 @@ class TestTaskCompletionReproposal:
         # Also backdate the short cooldown so only the verdict backoff matters.
         pilot._proposed_completions[task.id] = time.time() - 120
 
-        pilot._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()
         assert len(events) == 2, "backoff should expire; re-proposal should fire"
 
 
@@ -1234,7 +1234,7 @@ class TestAutoAssignTasks:
         """Returns False when queen is None."""
         pilot, _, board, _, _ = self._make_pilot_with_queen(monkeypatch)
         pilot.queen = None
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is False
 
     @pytest.mark.asyncio
@@ -1242,7 +1242,7 @@ class TestAutoAssignTasks:
         """Returns False when queen.can_call is False."""
         pilot, _, board, queen, _ = self._make_pilot_with_queen(monkeypatch)
         queen.can_call = False
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is False
 
     @pytest.mark.asyncio
@@ -1250,7 +1250,7 @@ class TestAutoAssignTasks:
         """Returns False when no available tasks exist."""
         pilot, _, board, queen, _ = self._make_pilot_with_queen(monkeypatch)
         # Board is empty — no tasks
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is False
 
     @pytest.mark.asyncio
@@ -1263,7 +1263,7 @@ class TestAutoAssignTasks:
         pilot, _, board, queen, _ = self._make_pilot_with_queen(
             monkeypatch, workers=workers, tasks=[task]
         )
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is False
 
     @pytest.mark.asyncio
@@ -1280,7 +1280,7 @@ class TestAutoAssignTasks:
         # Assign task1 to api so it has an active task
         board.assign(task1.id, "api")
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is False
         queen.assign_tasks.assert_not_awaited()
 
@@ -1309,7 +1309,7 @@ class TestAutoAssignTasks:
         proposals = []
         pilot.on_proposal(lambda p: proposals.append(p))
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is True
         assert len(proposals) == 1
         assert proposals[0].worker_name == "api"
@@ -1337,7 +1337,7 @@ class TestAutoAssignTasks:
         proposals = []
         pilot.on_proposal(lambda p: proposals.append(p))
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is False
         assert len(proposals) == 0
 
@@ -1357,7 +1357,7 @@ class TestAutoAssignTasks:
         proposals = []
         pilot.on_proposal(lambda p: proposals.append(p))
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is False
         assert len(proposals) == 0
 
@@ -1374,7 +1374,7 @@ class TestAutoAssignTasks:
 
         queen.assign_tasks.side_effect = RuntimeError("Queen crashed")
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is False
 
     @pytest.mark.asyncio
@@ -1404,7 +1404,7 @@ class TestAutoAssignTasks:
         assigned = []
         pilot.on_task_assigned(lambda w, t, m="": assigned.append((w.name, t.id)))
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is True
         assert len(assigned) == 1
         assert assigned[0] == ("api", task2.id)
@@ -1422,7 +1422,7 @@ class TestAutoAssignTasks:
         # Per-worker proposal check returns True for "api"
         pilot.set_pending_proposals_for_worker(lambda name: name == "api")
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is False
         queen.assign_tasks.assert_not_awaited()
 
@@ -1454,7 +1454,7 @@ class TestAutoAssignTasks:
         assigned = []
         pilot.on_task_assigned(lambda w, t, m="": assigned.append(w.name))
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is True
         # Queen should only have been called with "web" (api filtered out)
         call_args = queen.assign_tasks.call_args
@@ -1489,7 +1489,7 @@ class TestAutoAssignTasks:
         proposals = []
         pilot.on_proposal(lambda p: proposals.append(p))
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is False
         assert len(proposals) == 0
 
@@ -1560,7 +1560,7 @@ class TestAutoAssignAffinityRouting:
         assigned: list[tuple[str, str]] = []
         pilot.on_task_assigned(lambda w, t, m="": assigned.append((w.name, t.id)))
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is True
         # Queen MUST NOT be called — affinity routed deterministically.
         queen.assign_tasks.assert_not_awaited()
@@ -1610,7 +1610,7 @@ class TestAutoAssignAffinityRouting:
         assigned: list[tuple[str, str]] = []
         pilot.on_task_assigned(lambda w, t, m="": assigned.append((w.name, t.id)))
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is True
         queen.assign_tasks.assert_not_awaited()
         # Engagement signal pins to budgetbug despite "admin" keyword
@@ -1650,7 +1650,7 @@ class TestAutoAssignAffinityRouting:
         assigned: list[str] = []
         pilot.on_task_assigned(lambda w, t, m="": assigned.append(w.name))
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is True
         # Queen was called and Queen's pick was used
         queen.assign_tasks.assert_awaited_once()
@@ -1696,7 +1696,7 @@ class TestAutoAssignAffinityRouting:
         pilot.on_task_assigned(lambda w, t, m="": assigned.append(w.name))
         pilot.on_proposal(lambda p: proposals.append(p))
 
-        await pilot._auto_assign_tasks()
+        await pilot._task_lifecycle._auto_assign_tasks()
         # No assignment emitted, no proposal — task stays in backlog
         assert assigned == []
         assert proposals == []
@@ -1750,7 +1750,7 @@ class TestAutoAssignAffinityRouting:
         assigned: list[str] = []
         pilot.on_task_assigned(lambda w, t, m="": assigned.append(w.name))
 
-        await pilot._auto_assign_tasks()
+        await pilot._task_lifecycle._auto_assign_tasks()
         # Queen picked platform — but budgetbug had higher affinity. Since
         # budgetbug isn't actually idle, the override parks the task.
         assert assigned == []
@@ -1783,7 +1783,7 @@ async def test_circuit_breaker_recovery_on_successful_poll(monkeypatch):
     # Seed failures just below threshold
     import time as _time2
 
-    pilot._poll_failures["api"] = (4, _time2.monotonic())
+    pilot._dispatcher._poll_failures["api"] = (4, _time2.monotonic())
 
     # Now poll succeeds
     await pilot.poll_once()
@@ -1791,7 +1791,7 @@ async def test_circuit_breaker_recovery_on_successful_poll(monkeypatch):
     # Worker should still be alive
     assert len(workers) == 1
     # Failure counter should be reset
-    assert "api" not in pilot._poll_failures
+    assert "api" not in pilot._dispatcher._poll_failures
 
 
 # ── _check_task_completions edge cases ───────────────────────────────────
@@ -1803,13 +1803,13 @@ class TestAutoCompleteMinIdleConfig:
     def test_default_value(self):
         """Default auto_complete_min_idle is 45s."""
         pilot = DronePilot([], DroneLog(), drone_config=DroneConfig())
-        assert pilot._auto_complete_min_idle == 45.0
+        assert pilot._task_lifecycle._auto_complete_min_idle == 45.0
 
     def test_config_override(self):
         """DroneConfig.auto_complete_min_idle flows to pilot instance attribute."""
         cfg = DroneConfig(auto_complete_min_idle=10.0)
         pilot = DronePilot([], DroneLog(), drone_config=cfg)
-        assert pilot._auto_complete_min_idle == 10.0
+        assert pilot._task_lifecycle._auto_complete_min_idle == 10.0
 
     def test_completion_uses_config_value(self):
         """_check_task_completions should respect the configured threshold."""
@@ -1832,7 +1832,7 @@ class TestAutoCompleteMinIdleConfig:
         events: list[str] = []
         pilot.on("task_done", lambda w, t, r: events.append(t.id))
 
-        pilot._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()
         assert len(events) == 1  # triggered at 20s with 15s threshold
 
     def test_completion_blocked_below_threshold(self):
@@ -1855,7 +1855,7 @@ class TestAutoCompleteMinIdleConfig:
         events: list[str] = []
         pilot.on("task_done", lambda w, t, r: events.append(t.id))
 
-        pilot._check_task_completions()
+        pilot._task_lifecycle._check_task_completions()
         assert len(events) == 0  # blocked by 60s threshold
 
 
@@ -1869,7 +1869,7 @@ class TestCheckTaskCompletionsEdgeCases:
         pilot = DronePilot(workers, log, interval=1.0, pool=None, drone_config=DroneConfig())
         pilot.task_board = board
         pilot.enabled = True
-        pilot._COMPLETION_REPROPOSE_COOLDOWN = 60
+        pilot._task_lifecycle._COMPLETION_REPROPOSE_COOLDOWN = 60
         return pilot, workers, board, log
 
     def test_no_task_board_returns_false(self):
@@ -1878,7 +1878,7 @@ class TestCheckTaskCompletionsEdgeCases:
         log = DroneLog()
         pilot = DronePilot(workers, log, interval=1.0, pool=None, drone_config=DroneConfig())
         pilot.task_board = None
-        result = pilot._check_task_completions()
+        result = pilot._task_lifecycle._check_task_completions()
         assert result is False
 
     def test_worker_not_resting_skipped(self):
@@ -1894,7 +1894,7 @@ class TestCheckTaskCompletionsEdgeCases:
         events = []
         pilot.on("task_done", lambda w, t, r: events.append(t.id))
 
-        result = pilot._check_task_completions()
+        result = pilot._task_lifecycle._check_task_completions()
         assert result is False
         assert len(events) == 0
 
@@ -1911,7 +1911,7 @@ class TestCheckTaskCompletionsEdgeCases:
         events = []
         pilot.on("task_done", lambda w, t, r: events.append(t.id))
 
-        result = pilot._check_task_completions()
+        result = pilot._task_lifecycle._check_task_completions()
         assert result is False
         assert len(events) == 0
 
@@ -1928,7 +1928,7 @@ class TestCheckTaskCompletionsEdgeCases:
         events = []
         pilot.on("task_done", lambda w, t, r: events.append(t.id))
 
-        result = pilot._check_task_completions()
+        result = pilot._task_lifecycle._check_task_completions()
         assert result is False
         assert len(events) == 0
 
@@ -2039,17 +2039,17 @@ async def test_focus_caps_backoff(pilot_setup):
     assert workers[0].state == WorkerState.RESTING
 
     # Build up idle streak to get high backoff
-    pilot._idle_streak = 5
+    pilot._dispatcher._idle_streak = 5
 
     # Without focus, backoff should be high
-    normal_backoff = pilot._compute_backoff()
+    normal_backoff = pilot._dispatcher._compute_backoff()
     assert normal_backoff > pilot._focus_interval
 
     # Set focus on the RESTING worker
     pilot.set_focused_workers({workers[0].name})
 
     # Backoff should be capped at _focus_interval
-    capped_backoff = pilot._compute_backoff()
+    capped_backoff = pilot._dispatcher._compute_backoff()
     assert capped_backoff == pilot._focus_interval
 
 
@@ -2059,11 +2059,11 @@ async def test_focus_no_effect_when_worker_not_tracked(pilot_setup):
     pilot, workers, log = pilot_setup
     pilot.enabled = True
 
-    pilot._idle_streak = 5
+    pilot._dispatcher._idle_streak = 5
     pilot.set_focused_workers({"nonexistent"})
 
     backoff = min(
-        pilot._base_interval * (2 ** min(pilot._idle_streak, 3)),
+        pilot._base_interval * (2 ** min(pilot._dispatcher._idle_streak, 3)),
         pilot._max_interval,
     )
     # No intersection with workers → focus cap should not apply
@@ -2081,10 +2081,10 @@ async def test_focus_no_cap_when_workers_buzzing(pilot_setup):
     # Workers default to BUZZING in the fixture
     assert all(w.state == WorkerState.BUZZING for w in workers)
 
-    pilot._idle_streak = 5
+    pilot._dispatcher._idle_streak = 5
     pilot.set_focused_workers({workers[0].name})
 
-    backoff = pilot._compute_backoff()
+    backoff = pilot._dispatcher._compute_backoff()
     # BUZZING + focus should NOT be capped at _focus_interval
     assert backoff > pilot._focus_interval
 
@@ -2101,10 +2101,10 @@ async def test_focus_caps_when_worker_resting(pilot_setup):
     workers[0].update_state(WorkerState.RESTING)
     assert workers[0].state == WorkerState.RESTING
 
-    pilot._idle_streak = 5
+    pilot._dispatcher._idle_streak = 5
     pilot.set_focused_workers({workers[0].name})
 
-    backoff = pilot._compute_backoff()
+    backoff = pilot._dispatcher._compute_backoff()
     assert backoff == pilot._focus_interval
 
 
@@ -2158,7 +2158,7 @@ class TestAutoApproveAssignments:
         proposals = []
         pilot.on_proposal(lambda p: proposals.append(p))
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is True
         assert len(assigned) == 1
         assert assigned[0] == ("api", task.id)
@@ -2182,7 +2182,7 @@ class TestAutoApproveAssignments:
         proposals = []
         pilot.on_proposal(lambda p: proposals.append(p))
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is True
         assert len(assigned) == 0  # not auto-approved
         assert len(proposals) == 1  # went through proposal system
@@ -2207,7 +2207,7 @@ class TestAutoApproveAssignments:
         proposals = []
         pilot.on_proposal(lambda p: proposals.append(p))
 
-        result = await pilot._auto_assign_tasks()
+        result = await pilot._task_lifecycle._auto_assign_tasks()
         assert result is True
         assert len(assigned) == 0
         assert len(proposals) == 1
@@ -2225,7 +2225,7 @@ class TestAutoApproveAssignments:
             {"worker": "api", "task_id": task.id, "message": "Do it", "confidence": 0.9}
         ]
 
-        await pilot._auto_assign_tasks()
+        await pilot._task_lifecycle._auto_assign_tasks()
         assert pilot._idle_consecutive.get("api", 0) == 0
 
 
@@ -2376,7 +2376,7 @@ async def test_sleeping_worker_poll_throttled(monkeypatch):
     workers[0].process.get_styled_content = counting_get_styled_content
 
     # Initialize deferred actions list (normally done by _poll_once_locked)
-    pilot._deferred_actions = []
+    pilot._decision_exec._deferred_actions = []
 
     # First poll — should do a full poll (no previous timestamp)
     dead: list = []
@@ -2434,7 +2434,7 @@ async def test_sleeping_throttle_rechecks_state(monkeypatch):
     workers[0].process._child_foreground_command = "claude"
 
     # Initialize deferred actions list (normally done by _poll_once_locked)
-    pilot._deferred_actions = []
+    pilot._decision_exec._deferred_actions = []
 
     # First poll — full
     dead: list = []
@@ -2669,7 +2669,7 @@ async def test_dead_worker_cleanup_removes_suspension(pilot_setup, monkeypatch):
     pilot._suspended.add(w.name)
     pilot._suspended_at[w.name] = time.time()
 
-    pilot._cleanup_dead_workers([w])
+    pilot._dispatcher._cleanup_dead_workers([w])
 
     assert w.name not in pilot._suspended
     assert w.name not in pilot._suspended_at
@@ -2714,34 +2714,34 @@ def test_diagnostics_includes_suspension_info(pilot_setup):
 def test_set_emit_decisions(pilot_setup):
     """set_emit_decisions toggles the _emit_decisions flag."""
     pilot, _, _ = pilot_setup
-    assert pilot._emit_decisions is False  # default
+    assert pilot._decision_exec._emit_decisions is False  # default
 
     pilot.set_emit_decisions(True)
-    assert pilot._emit_decisions is True
+    assert pilot._decision_exec._emit_decisions is True
 
     pilot.set_emit_decisions(False)
-    assert pilot._emit_decisions is False
+    assert pilot._decision_exec._emit_decisions is False
 
 
 def test_set_auto_complete_idle(pilot_setup):
     """set_auto_complete_idle updates the minimum idle threshold."""
     pilot, _, _ = pilot_setup
-    original = pilot._auto_complete_min_idle
+    original = pilot._task_lifecycle._auto_complete_min_idle
 
     pilot.set_auto_complete_idle(10.0)
-    assert pilot._auto_complete_min_idle == 10.0
+    assert pilot._task_lifecycle._auto_complete_min_idle == 10.0
 
     pilot.set_auto_complete_idle(original)
-    assert pilot._auto_complete_min_idle == original
+    assert pilot._task_lifecycle._auto_complete_min_idle == original
 
 
 def test_mark_completion_seen(pilot_setup):
     """mark_completion_seen sets the _saw_completion flag."""
     pilot, _, _ = pilot_setup
-    assert pilot._saw_completion is False  # default
+    assert pilot._task_lifecycle._saw_completion is False  # default
 
     pilot.mark_completion_seen()
-    assert pilot._saw_completion is True
+    assert pilot._task_lifecycle._saw_completion is True
 
 
 # ── Terminal-active guard ─────────────────────────────────────────────
@@ -2766,11 +2766,11 @@ class TestTerminalActiveGuard:
         from swarm.drones.rules import Decision, DroneDecision
 
         decision = DroneDecision(decision=Decision.CONTINUE, reason="test", source="test")
-        pilot._deferred_actions = [
+        pilot._decision_exec._deferred_actions = [
             ("continue", workers[0], decision, workers[0].state, workers[0].process)
         ]
 
-        await pilot._execute_deferred_actions()
+        await pilot._decision_exec._execute_deferred_actions()
         # The continue should have been skipped
         assert len(workers[0].process.keys_sent) == 0
 
@@ -2844,11 +2844,11 @@ class TestTerminalActiveGuard:
         from swarm.drones.rules import Decision, DroneDecision
 
         decision = DroneDecision(decision=Decision.CONTINUE, reason="test", source="test")
-        pilot._deferred_actions = [
+        pilot._decision_exec._deferred_actions = [
             ("continue", workers[0], decision, workers[0].state, workers[0].process)
         ]
 
-        await pilot._execute_deferred_actions()
+        await pilot._decision_exec._execute_deferred_actions()
         assert len(workers[0].process.keys_sent) == 0
 
     @pytest.mark.asyncio
@@ -2864,11 +2864,11 @@ class TestTerminalActiveGuard:
         from swarm.drones.rules import Decision, DroneDecision
 
         decision = DroneDecision(decision=Decision.CONTINUE, reason="test", source="test")
-        pilot._deferred_actions = [
+        pilot._decision_exec._deferred_actions = [
             ("continue", workers[0], decision, workers[0].state, workers[0].process)
         ]
 
-        await pilot._execute_deferred_actions()
+        await pilot._decision_exec._execute_deferred_actions()
         assert len(workers[0].process.keys_sent) == 0
         blocked = [e for e in log.entries if e.action == SystemAction.QUEEN_BLOCKED]
         assert len(blocked) == 1
@@ -2886,11 +2886,11 @@ class TestTerminalActiveGuard:
         from swarm.drones.rules import Decision, DroneDecision
 
         decision = DroneDecision(decision=Decision.CONTINUE, reason="test", source="test")
-        pilot._deferred_actions = [
+        pilot._decision_exec._deferred_actions = [
             ("continue", workers[0], decision, workers[0].state, workers[0].process)
         ]
 
-        await pilot._execute_deferred_actions()
+        await pilot._decision_exec._execute_deferred_actions()
         assert len(workers[0].process.keys_sent) == 0
 
 
@@ -2940,7 +2940,7 @@ def test_hive_complete_condition_accepts_sleeping_workers():
         task_board=board,
     )
     pilot.enabled = True
-    pilot._saw_completion = True
+    pilot._task_lifecycle._saw_completion = True
 
     # Make the worker SLEEPING (RESTING for > 20 min)
     workers[0].state_since = time.time() - 1500
@@ -2977,12 +2977,14 @@ async def test_deferred_continue_skipped_on_state_change(monkeypatch):
         reason="test",
         source="test",
     )
-    pilot._deferred_actions.append(("continue", workers[0], decision, WorkerState.WAITING, proc))
+    pilot._decision_exec._deferred_actions.append(
+        ("continue", workers[0], decision, WorkerState.WAITING, proc)
+    )
 
     # Change state to BUZZING before execution
     workers[0].state = WorkerState.BUZZING
 
-    await pilot._execute_deferred_actions()
+    await pilot._decision_exec._execute_deferred_actions()
 
     # send_enter should NOT have been called
     assert "\n" not in proc.keys_sent
@@ -3006,7 +3008,7 @@ async def test_deferred_continue_uses_decision_time_process(monkeypatch):
         reason="test",
         source="test",
     )
-    pilot._deferred_actions.append(
+    pilot._decision_exec._deferred_actions.append(
         ("continue", workers[0], decision, WorkerState.WAITING, original_proc)
     )
 
@@ -3014,7 +3016,7 @@ async def test_deferred_continue_uses_decision_time_process(monkeypatch):
     new_proc = FakeWorkerProcess(name="api")
     workers[0].process = new_proc
 
-    await pilot._execute_deferred_actions()
+    await pilot._decision_exec._execute_deferred_actions()
 
     # Original process should have received the approval response
     assert "\r" in original_proc.keys_sent
@@ -3039,14 +3041,14 @@ async def test_deferred_revive_skipped_on_state_change(monkeypatch):
         reason="test",
         source="test",
     )
-    pilot._deferred_actions.append(
+    pilot._decision_exec._deferred_actions.append(
         ("revive", workers[0], decision, WorkerState.STUNG, workers[0].process)
     )
 
     # Change state before execution
     workers[0].state = WorkerState.BUZZING
 
-    await pilot._execute_deferred_actions()
+    await pilot._decision_exec._execute_deferred_actions()
 
     # revive_worker should NOT have been called
     mock_revive.assert_not_called()
@@ -3099,7 +3101,7 @@ Read file
 Esc to cancel"""
 
         with patch("swarm.drones.decision_executor.decide", wraps=decide) as mock_decide:
-            pilot._run_decision_sync(w, content, events=events)
+            pilot._decision_exec._run_decision_sync(w, content, events=events)
             mock_decide.assert_called_once()
             call_kwargs = mock_decide.call_args
             assert call_kwargs.kwargs.get("events") is events
@@ -3144,12 +3146,12 @@ def test_suspend_workers_does_not_send_sigtstp(pilot_setup, monkeypatch):
         "_signal_worker_async",
         lambda name, sig: signals_sent.append((name, sig)),
     )
-    pilot._suspend_workers([w.name for w in workers], "HIGH")
+    pilot._pressure_mgr._suspend_workers([w.name for w in workers], "HIGH")
     # No signals should have been sent
     assert signals_sent == []
     # But workers should be tracked as suspended
     for w in workers:
-        assert w.name in pilot._suspended_for_pressure
+        assert w.name in pilot._pressure_mgr._suspended_for_pressure
         assert w.name in pilot._suspended
 
 
@@ -3163,14 +3165,14 @@ def test_resume_pressure_suspended_does_not_send_sigcont(pilot_setup, monkeypatc
         lambda name, sig: signals_sent.append((name, sig)),
     )
     # First suspend them
-    pilot._suspend_workers([w.name for w in workers], "HIGH")
+    pilot._pressure_mgr._suspend_workers([w.name for w in workers], "HIGH")
     signals_sent.clear()
     # Now resume
-    pilot._resume_pressure_suspended()
+    pilot._pressure_mgr._resume_pressure_suspended()
     # No SIGCONT should be sent
     assert signals_sent == []
     # Sets should be cleaned up
-    assert len(pilot._suspended_for_pressure) == 0
+    assert len(pilot._pressure_mgr._suspended_for_pressure) == 0
     for w in workers:
         assert w.name not in pilot._suspended
 
@@ -3182,9 +3184,9 @@ def test_critical_pressure_skips_buzzing_workers(pilot_setup, monkeypatch):
     # Set workers to BUZZING (the default from pilot_setup)
     for w in workers:
         w.state = WorkerState.BUZZING
-    pilot._suspend_on_critical_pressure()
+    pilot._pressure_mgr._suspend_on_critical_pressure()
     # No workers should be suspended since they're all BUZZING
-    assert len(pilot._suspended_for_pressure) == 0
+    assert len(pilot._pressure_mgr._suspended_for_pressure) == 0
 
 
 def test_critical_pressure_suspends_sleeping_and_resting(pilot_setup, monkeypatch):
@@ -3197,9 +3199,9 @@ def test_critical_pressure_suspends_sleeping_and_resting(pilot_setup, monkeypatc
     workers[1].state = WorkerState.RESTING
     workers[1].state_since = time.time() - 10  # recent, stays RESTING
     # The most recent worker is exempt, but both are eligible by state
-    pilot._suspend_on_critical_pressure()
+    pilot._pressure_mgr._suspend_on_critical_pressure()
     # At least one should be suspended (the non-most-recent one)
-    assert len(pilot._suspended_for_pressure) >= 1
+    assert len(pilot._pressure_mgr._suspended_for_pressure) >= 1
 
 
 def test_critical_pressure_skips_waiting_workers(pilot_setup, monkeypatch):
@@ -3208,8 +3210,8 @@ def test_critical_pressure_skips_waiting_workers(pilot_setup, monkeypatch):
     monkeypatch.setattr(pilot._pressure_mgr, "_signal_worker_async", lambda name, sig: None)
     for w in workers:
         w.state = WorkerState.WAITING
-    pilot._suspend_on_critical_pressure()
-    assert len(pilot._suspended_for_pressure) == 0
+    pilot._pressure_mgr._suspend_on_critical_pressure()
+    assert len(pilot._pressure_mgr._suspended_for_pressure) == 0
 
 
 # --- Oversight result handling ---

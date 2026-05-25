@@ -405,7 +405,7 @@ class ProposalManager:
         if pilot:
             pilot.clear_escalation(proposal.worker_name)
             if proposal.proposal_type == ProposalType.COMPLETION and proposal.task_id:
-                pilot.clear_proposed_completion(proposal.task_id)
+                pilot._task_lifecycle.clear_proposed_completion(proposal.task_id)
             if proposal.proposal_type == ProposalType.PARK and proposal.task_id:
                 # Operator says "not operator-blocked" — back off so
                 # oversight doesn't immediately re-propose the same park.
@@ -439,7 +439,7 @@ class ProposalManager:
             if pilot:
                 pilot.clear_escalation(p.worker_name)
                 if p.proposal_type == ProposalType.COMPLETION and p.task_id:
-                    pilot.clear_proposed_completion(p.task_id)
+                    pilot._task_lifecycle.clear_proposed_completion(p.task_id)
         count = len(pending)
         if count:
             self._drone_log.add(
