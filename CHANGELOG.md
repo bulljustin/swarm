@@ -10,6 +10,43 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.26.6] - 2026-05-26
+
+### Features
+
+### Changes
+
+- **ConfigManager refactor (audit finding #2)**: extract every
+  per-section validate-and-assign method out of the 1584-line
+  `ConfigManager` into a new `swarm.server.config_appliers/` package
+  (12 modules, one per section). The class is now a thin coordinator
+  around the lifecycle pieces (`hot_apply`, `reload`, `watch_mtime`,
+  `check_file`, `save`, `toggle_drones`) and a registry-driven
+  `apply_update`.
+  - `config_manager.py` shrunk from 1584 → 699 lines, 41 → 16 methods
+    (4 are backward-compat shims kept so existing tests don't have
+    to rewrite their direct method calls).
+  - New `swarm.server.config_appliers.SECTION_REGISTRY` drives
+    dispatch — adding a new section is now a 2-file change (new
+    module + one registry entry). The hand-maintained
+    `_KNOWN_BODY_KEYS` frozenset is replaced by a `known_body_keys()`
+    function that derives the allow-list from the registry plus
+    each virtual applier's declared top-level keys, killing the
+    "remember to update both places" footgun the #328 silent-drop
+    class was vulnerable to.
+  - Appliers are free functions of `(cfg, body, *, deps) -> FieldOutcome`
+    where `deps: ApplierDeps` carries the two side-effect handles
+    (`invalidate_provider_cache`, `get_worker_svc`) the two appliers
+    that need them (`llms`/`provider_overrides`, `workers`) reach for.
+    Pattern mirrors `WorkerHealthDetectors` from the state-tracker
+    refactor — small dataclass bundle instead of N callback params.
+  - No behavior change. Same validation errors, same FieldOutcomes,
+    same fail-loud diagnostic at the end of `apply_update`. Full
+    4605-test pytest run green. See
+    `docs/specs/config-manager-refactor.md` for the extraction spec.
+
+### Fixes
+
 ## [2026.5.26.5] - 2026-05-26
 
 ### Features
