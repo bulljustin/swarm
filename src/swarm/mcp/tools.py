@@ -9,8 +9,9 @@ Handler functions take (daemon, worker_name, arguments) and return content.
 from __future__ import annotations
 
 import hashlib
+from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from swarm.mcp._arg_types import (
     BatchArgs,
@@ -31,6 +32,16 @@ from swarm.mcp._arg_types import (
 
 if TYPE_CHECKING:
     from swarm.server.daemon import SwarmDaemon
+    from swarm.tasks.task import SwarmTask
+
+
+class ToolsSourceDrift(TypedDict):
+    """Return shape for :func:`tools_source_drift` — dashboard probe."""
+
+    drift: bool
+    source_path: str
+    startup_hash: str
+    current_hash: str
 
 
 def _hash_source(path: Path) -> str:
@@ -52,7 +63,7 @@ _SOURCE_PATH: Path = Path(__file__).resolve()
 _SOURCE_HASH_AT_IMPORT: str = _hash_source(_SOURCE_PATH)
 
 
-def tools_source_drift() -> dict[str, Any]:
+def tools_source_drift() -> ToolsSourceDrift:
     """Return whether ``tools.py`` on disk differs from the imported copy.
 
     Output shape::
@@ -1379,16 +1390,18 @@ _TASK_STATUS_MAX_LIMIT = 500
 _OPEN_STATUSES = {"backlog", "unassigned", "assigned", "active"}
 
 
-def _format_task_line(t: Any) -> str:
+def _format_task_line(t: SwarmTask) -> str:
     w = t.assigned_worker or "unassigned"
     return f"#{t.number} [{t.status.value}] {t.title} ({w})"
 
 
-def _enum_value(v: Any) -> str:
-    return v.value if hasattr(v, "value") else str(v)
+def _enum_value(v: Enum | str | None) -> str:
+    if v is None:
+        return ""
+    return v.value if isinstance(v, Enum) else str(v)
 
 
-def _format_task_meta_line(t: Any) -> str:
+def _format_task_meta_line(t: SwarmTask) -> str:
     parts = [f"worker={t.assigned_worker or 'unassigned'}"]
     if getattr(t, "priority", None):
         parts.append(f"priority={_enum_value(t.priority)}")
@@ -1399,7 +1412,7 @@ def _format_task_meta_line(t: Any) -> str:
     return "  " + " | ".join(parts)
 
 
-def _format_cross_project_line(t: Any) -> str | None:
+def _format_cross_project_line(t: SwarmTask) -> str | None:
     if not getattr(t, "is_cross_project", False):
         return None
     parts: list[str] = []
@@ -1412,7 +1425,7 @@ def _format_cross_project_line(t: Any) -> str | None:
     return ("  cross-project: " + " | ".join(parts)) if parts else None
 
 
-def _format_section(label: str, items: list[Any], bullet: str = "  - ") -> list[str]:
+def _format_section(label: str, items: list[str], bullet: str = "  - ") -> list[str]:
     if not items:
         return []
     out = ["", f"{label}:"]
@@ -1420,7 +1433,7 @@ def _format_section(label: str, items: list[Any], bullet: str = "  - ") -> list[
     return out
 
 
-def _format_task_detail(t: Any) -> str:
+def _format_task_detail(t: SwarmTask) -> str:
     """Multi-line view used for single-task lookups by number — gives the
     worker the full context (description, acceptance criteria, attachments,
     etc.) instead of just the title."""
@@ -1455,13 +1468,13 @@ def _format_task_detail(t: Any) -> str:
     return "\n".join(lines)
 
 
-def _sort_tasks_for_display(tasks: list[Any]) -> list[Any]:
+def _sort_tasks_for_display(tasks: list[SwarmTask]) -> list[SwarmTask]:
     """Open tasks first (newest-by-number DESC), then completed/failed by
     completed_at DESC (falling back to number DESC). Older implementations
     sorted ASC and sliced the head, which hid newer assignments — see task
     #142."""
 
-    def key(t: Any) -> tuple[int, float, int]:
+    def key(t: SwarmTask) -> tuple[int, float, int]:
         is_open = t.status.value in _OPEN_STATUSES
         # Primary: open first (0) vs closed (1).
         # Secondary: most recent first — completed_at for closed tasks,
@@ -1473,7 +1486,12 @@ def _sort_tasks_for_display(tasks: list[Any]) -> list[Any]:
     return sorted(tasks, key=key)
 
 
-def _lookup_task_by_number(d: SwarmDaemon, raw: Any) -> list[dict[str, Any]]:
+def _lookup_task_by_number(d: SwarmDaemon, raw: int | str | None) -> list[dict[str, Any]]:
+    # ``int(None)`` raises TypeError → caught below and reported with the
+    # caller-facing snippet. Narrow ``raw`` first so the conversion only
+    # sees the supported types.
+    if raw is None:
+        return [{"type": "text", "text": f"Invalid 'number': {raw!r}"}]
     try:
         target = int(raw)
     except (TypeError, ValueError):
@@ -1484,8 +1502,10 @@ def _lookup_task_by_number(d: SwarmDaemon, raw: Any) -> list[dict[str, Any]]:
     return [{"type": "text", "text": f"No task found with number #{target}."}]
 
 
-def _coerce_limit(raw: Any) -> int | str:
+def _coerce_limit(raw: int | str | None) -> int | str:
     """Return a clamped integer limit or a user-facing error string."""
+    if raw is None:
+        return f"Invalid 'limit': {raw!r}"
     try:
         limit = int(raw)
     except (TypeError, ValueError):
@@ -1496,8 +1516,8 @@ def _coerce_limit(raw: Any) -> int | str:
 
 
 def _apply_task_filter(
-    tasks: list[Any], filt: str, worker_name: str, *, include_completed: bool
-) -> list[Any]:
+    tasks: list[SwarmTask], filt: str, worker_name: str, *, include_completed: bool
+) -> list[SwarmTask]:
     if filt == "backlog":
         return [t for t in tasks if t.status.value == "backlog"]
     if filt == "unassigned":
@@ -1564,7 +1584,7 @@ def _handle_task_status(
     }
 
 
-def _task_to_payload(t: Any) -> dict[str, Any]:
+def _task_to_payload(t: SwarmTask) -> dict[str, Any]:
     """Project a SwarmTask onto a JSON-friendly dict for structuredContent.
 
     Carries only the fields the model needs to reason about — title,
@@ -1873,7 +1893,7 @@ def _handle_report_progress(
     return [{"type": "text", "text": "Progress reported."}]
 
 
-def _validate_batch_op(op: Any) -> tuple[str, dict[str, Any], str]:
+def _validate_batch_op(op: object) -> tuple[str, dict[str, Any], str]:
     """Validate a single batch op. Returns ``(tool, args, error)``.
 
     ``error`` is empty when the op is valid. Otherwise it explains why

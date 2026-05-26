@@ -10,6 +10,33 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.26.5] - 2026-05-26
+
+### Features
+
+### Changes
+
+- **mcp/tools.py `Any` cleanup (audit finding #6)**: drop the
+  unnecessary `Any` annotations on the task-shaped helpers and the
+  JSON-input coercers. `_format_task_line`, `_format_task_meta_line`,
+  `_format_cross_project_line`, `_format_task_detail`,
+  `_sort_tasks_for_display` (+ its inner `key`), `_apply_task_filter`,
+  `_task_to_payload` now declare their `SwarmTask` parameter.
+  `_lookup_task_by_number` and `_coerce_limit` take `int | str | None`
+  (the actual JSON shape) and narrow `None` explicitly so the runtime
+  `int()` only sees the supported types. `_enum_value` takes
+  `Enum | str | None` and uses `isinstance(v, Enum)` instead of the
+  duck-typed `hasattr(v, "value")` check. `_format_section.items`
+  becomes `list[str]`. `_validate_batch_op.op` becomes `object` since
+  the function explicitly validates the runtime type. New
+  `ToolsSourceDrift` TypedDict replaces `dict[str, Any]` as the
+  `tools_source_drift()` return type. `Any` usages in the file:
+  34 → 22 (the remaining 22 are all MCP protocol JSON shapes — tool
+  schemas, content blocks, JSON-RPC arg dicts — kept by design). No
+  behavior change; no `# type: ignore` markers added.
+
+### Fixes
+
 ## [2026.5.26.4] - 2026-05-26
 
 ### Features
