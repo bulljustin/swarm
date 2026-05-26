@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 
 from swarm.logging import get_logger
 from swarm.server.helpers import get_daemon, handle_errors, json_error
 from swarm.worker.worker import WorkerState
+
+if TYPE_CHECKING:
+    from swarm.server.daemon import SwarmDaemon
 
 _log = get_logger("server.routes.queen")
 
@@ -240,7 +244,7 @@ async def handle_resolve_thread(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 
-def _broadcast_thread(daemon: object, thread_id: str, event: str) -> None:
+def _broadcast_thread(daemon: SwarmDaemon, thread_id: str, event: str) -> None:
     try:
         store = getattr(daemon, "queen_chat", None)
         if store is None:
@@ -248,16 +252,16 @@ def _broadcast_thread(daemon: object, thread_id: str, event: str) -> None:
         thread = store.get_thread(thread_id)
         if thread is None:
             return
-        daemon.broadcast_ws(  # type: ignore[attr-defined]
-            {"type": "queen.thread", "event": event, "thread": thread.to_dict()}
-        )
+        daemon.broadcast_ws({"type": "queen.thread", "event": event, "thread": thread.to_dict()})
     except Exception:
         _log.debug("queen thread broadcast failed", exc_info=True)
 
 
-def _broadcast_message(daemon: object, thread_id: str, message_dict: dict[str, object]) -> None:
+def _broadcast_message(
+    daemon: SwarmDaemon, thread_id: str, message_dict: dict[str, object]
+) -> None:
     try:
-        daemon.broadcast_ws(  # type: ignore[attr-defined]
+        daemon.broadcast_ws(
             {"type": "queen.message", "thread_id": thread_id, "message": message_dict}
         )
     except Exception:

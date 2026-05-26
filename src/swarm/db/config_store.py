@@ -355,11 +355,12 @@ def save_config_to_db(
                 (key, json.dumps(full[key]), now),
             )
 
-    # Save workers (normalized)
-    _save_workers(db, config.workers, now, sync_approval_rules=sync_approval_rules)
+    # Save workers (normalized) — returns the up-to-date worker name → id
+    # map so _save_groups can skip a second ``SELECT id, name FROM workers``.
+    worker_ids = _save_workers(db, config.workers, now, sync_approval_rules=sync_approval_rules)
 
-    # Save groups (normalized)
-    _save_groups(db, config.groups, config.workers, now)
+    # Save groups (normalized) — reuses the worker map from _save_workers.
+    _save_groups(db, config.groups, config.workers, now, worker_ids)
 
     # Save global approval rules — ONLY when the caller has told us the
     # in-memory rule set is authoritative.  Otherwise leave the table
@@ -388,8 +389,12 @@ def _save_workers(
     now: float,
     *,
     sync_approval_rules: bool = False,
-) -> None:
+) -> dict[str, str]:
     """Sync workers table with config worker list.
+
+    Returns the post-save ``{worker_name: worker_id}`` map so callers
+    (notably :func:`_save_groups`) can resolve member references without
+    re-issuing ``SELECT id, name FROM workers``.
 
     When ``sync_approval_rules`` is False (the default), per-worker
     approval rules are **not** touched — same rationale as the global
@@ -401,9 +406,11 @@ def _save_workers(
         existing[r["name"]] = r["id"]
 
     seen_names: set[str] = set()
+    final_ids: dict[str, str] = {}
     for i, wc in enumerate(workers):
         seen_names.add(wc.name)
         wid = existing.get(wc.name, uuid.uuid4().hex[:16])
+        final_ids[wc.name] = wid
         db.execute(
             "INSERT OR REPLACE INTO workers "
             "(id, name, path, description, provider, isolation, "
@@ -421,25 +428,38 @@ def _save_workers(
                 now,
             ),
         )
-        # Save worker-specific approval rules (only when caller opts in)
-        if sync_approval_rules:
-            db.delete(
-                "approval_rules",
-                "owner_type = 'worker' AND owner_id = ?",
-                (wid,),
-            )
+
+    # Save worker-specific approval rules in batch (only when caller opts in).
+    # Previously this ran one DELETE per worker inside the loop above; now we
+    # do a single ``DELETE … WHERE owner_id IN (…)`` followed by a single
+    # ``executemany`` insert.
+    if sync_approval_rules and final_ids:
+        wids = list(final_ids.values())
+        placeholders = ",".join("?" * len(wids))
+        db.execute(
+            f"DELETE FROM approval_rules "
+            f"WHERE owner_type = 'worker' AND owner_id IN ({placeholders})",
+            tuple(wids),
+        )
+        rule_rows: list[tuple[Any, ...]] = []
+        for wc in workers:
+            wid = final_ids[wc.name]
             for j, rule in enumerate(wc.approval_rules):
-                db.execute(
-                    "INSERT INTO approval_rules "
-                    "(owner_type, owner_id, pattern, action, sort_order) "
-                    "VALUES ('worker', ?, ?, ?, ?)",
-                    (wid, rule.pattern, rule.action, j),
-                )
+                rule_rows.append((wid, rule.pattern, rule.action, j))
+        if rule_rows:
+            db.executemany(
+                "INSERT INTO approval_rules "
+                "(owner_type, owner_id, pattern, action, sort_order) "
+                "VALUES ('worker', ?, ?, ?, ?)",
+                rule_rows,
+            )
 
     # Remove workers no longer in config
     for name, wid in existing.items():
         if name not in seen_names:
             db.delete("workers", "id = ?", (wid,))
+
+    return final_ids
 
 
 def _save_groups(
@@ -447,12 +467,17 @@ def _save_groups(
     groups: list[GroupConfig],
     workers: list[WorkerConfig],
     now: float,
+    worker_ids: dict[str, str] | None = None,
 ) -> None:
-    """Sync groups table with config group list."""
-    # Build name → worker ID map
-    worker_ids = {}
-    for r in db.fetchall("SELECT id, name FROM workers"):
-        worker_ids[r["name"]] = r["id"]
+    """Sync groups table with config group list.
+
+    ``worker_ids`` is the ``{worker_name: worker_id}`` map returned by
+    :func:`_save_workers`. When None (defensive: standalone callers),
+    the map is re-fetched from the DB.
+    """
+    # Build name → worker ID map (reuse caller's map if provided)
+    if worker_ids is None:
+        worker_ids = {r["name"]: r["id"] for r in db.fetchall("SELECT id, name FROM workers")}
 
     existing_groups = {}
     for r in db.fetchall("SELECT id, name FROM groups"):

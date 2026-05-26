@@ -160,21 +160,84 @@ class MessageStore:
 
         ``sender`` is excluded from the fan-out so a worker broadcasting
         doesn't re-receive its own message.  Each row is still subject to
-        the 60-second dedup window via :meth:`send`.
+        the 60-second dedup window: if an unread message with the same
+        (sender, recipient, msg_type) already exists within the window,
+        its content + timestamp are merged in place rather than inserting
+        a new row.
 
         Returns the list of row ids (one per actual delivery).  Empty
         recipient list returns an empty list (not an error).
+
+        Implementation note: replaces the previous per-recipient call to
+        :meth:`send` (which ran one dedup SELECT per row) with a single
+        batched lookup followed by per-recipient UPDATE/INSERT.  Saves
+        N-1 round-trips on N-recipient broadcasts (the common case is
+        every worker).
         """
-        ids: list[int] = []
         if not self._conn or not recipients:
-            return ids
+            return []
+        if msg_type not in _VALID_MSG_TYPES:
+            msg_type = "finding"
+
+        # De-dup the input + drop sender/blanks in a single pass while
+        # preserving caller order (Python 3.7+ dict ordering).
+        targets: list[str] = []
+        seen: set[str] = set()
         for r in recipients:
-            if not r or r == sender:
+            if not r or r == sender or r in seen:
                 continue
-            msg_id = self.send(sender, r, msg_type, content)
-            if msg_id is not None:
-                ids.append(msg_id)
-        return ids
+            seen.add(r)
+            targets.append(r)
+        if not targets:
+            return []
+
+        now = time.time()
+        cutoff = now - _DEDUP_WINDOW
+
+        with self._lock:
+            try:
+                # One SELECT to find the most-recent unread row per recipient
+                # that falls inside the dedup window.  Without v12's
+                # idx_messages_dedup this would be a full table scan; with
+                # it the planner walks the (sender, recipient, msg_type,
+                # created_at) prefix.
+                placeholders = ",".join("?" * len(targets))
+                rows = self._conn.execute(
+                    f"SELECT recipient, MAX(id) FROM messages"
+                    f" WHERE sender = ? AND msg_type = ?"
+                    f" AND recipient IN ({placeholders})"
+                    f" AND created_at > ? AND read_at IS NULL"
+                    f" GROUP BY recipient",
+                    (sender, msg_type, *targets, cutoff),
+                ).fetchall()
+                # Positional indexing — the standalone-file MessageStore
+                # path uses a raw sqlite3.Connection without row_factory.
+                existing: dict[str, int] = {r[0]: r[1] for r in rows}
+
+                ids: list[int] = []
+                for recipient in targets:
+                    existing_id = existing.get(recipient)
+                    if existing_id is not None:
+                        # Merge: update content + bump timestamp
+                        self._conn.execute(
+                            "UPDATE messages SET content = ?, created_at = ? WHERE id = ?",
+                            (content, now, existing_id),
+                        )
+                        ids.append(existing_id)
+                    else:
+                        cur = self._conn.execute(
+                            "INSERT INTO messages "
+                            "(sender, recipient, msg_type, content, created_at)"
+                            " VALUES (?, ?, ?, ?, ?)",
+                            (sender, recipient, msg_type, content, now),
+                        )
+                        if cur.lastrowid is not None:
+                            ids.append(cur.lastrowid)
+                self._conn.commit()
+                return ids
+            except sqlite3.Error:
+                _log.warning("failed to broadcast message", exc_info=True)
+                return []
 
     def get_unread(self, recipient: str, limit: int = 20) -> list[Message]:
         """Get unread messages for a worker."""

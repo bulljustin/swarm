@@ -17,7 +17,7 @@ from swarm.server.helpers import (
     validate_worker_name,
     worker_action,
 )
-from swarm.worker.worker import TokenUsage
+from swarm.worker.worker import TokenUsage, Worker
 
 _log = get_logger("server.routes.workers")
 
@@ -491,7 +491,7 @@ def _parse_usage_window(
 
 
 def _compute_worker_usage(
-    worker: object,
+    worker: Worker,
     start_time: float,
     window_since: float | None,
     window_until: float | None,
@@ -507,22 +507,19 @@ def _compute_worker_usage(
     from swarm.worker.usage import estimate_cost_for_provider, get_worker_usage
 
     if window_since is None and window_until is None:
-        return worker.usage  # type: ignore[attr-defined,no-any-return]
+        return worker.usage
     try:
-        prov = get_provider(worker.provider_name)  # type: ignore[attr-defined]
+        prov = get_provider(worker.provider_name)
     except Exception:
         prov = None
     tu = get_worker_usage(
-        worker.path,  # type: ignore[attr-defined]
+        worker.path,
         start_time,
         provider=prov,
         window_since=window_since,
         window_until=window_until,
     )
-    tu.cost_usd = estimate_cost_for_provider(
-        tu,
-        worker.provider_name,  # type: ignore[attr-defined]
-    )
+    tu.cost_usd = estimate_cost_for_provider(tu, worker.provider_name)
     return tu
 
 

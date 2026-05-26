@@ -7,7 +7,7 @@ incrementally.
 
 from __future__ import annotations
 
-CURRENT_VERSION = 11
+CURRENT_VERSION = 12
 
 PRAGMAS = """\
 PRAGMA journal_mode=WAL;
@@ -200,6 +200,12 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient);
 CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(recipient, read_at);
+-- v12: matches MessageStore.send()'s dedup probe — every inter-worker
+-- send runs ``WHERE sender=? AND recipient=? AND msg_type=? AND
+-- created_at > ?``.  Without this index the dedup check was a full
+-- table scan on every message.
+CREATE INDEX IF NOT EXISTS idx_messages_dedup
+  ON messages(sender, recipient, msg_type, created_at);
 
 -- ============================================================
 -- PIPELINES

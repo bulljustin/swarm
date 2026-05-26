@@ -115,6 +115,8 @@ class SwarmDB:
             self._migrate_v10_playbooks()
         if from_version < 11:
             self._migrate_v11_block_reason()
+        if from_version < 12:
+            self._migrate_v12_messages_dedup_index()
         self._conn.execute(
             "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, ?)",
             (CURRENT_VERSION, time.time()),
@@ -367,6 +369,31 @@ class SwarmDB:
             _log.info("v11: added tasks.block_reason")
         except sqlite3.OperationalError:
             _log.debug("v11 migration: block_reason column likely already exists")
+
+    def _migrate_v12_messages_dedup_index(self) -> None:
+        """v12: composite index matching MessageStore.send()'s dedup probe.
+
+        Every inter-worker message runs ``WHERE sender=? AND recipient=?
+        AND msg_type=? AND created_at > ?``.  The pre-v12 indexes
+        (``idx_messages_recipient`` and ``idx_messages_unread``) only
+        covered ``recipient``, so dedup was effectively a full table
+        scan against the leftmost-column-only index.  This index makes
+        the hot path index-covered.
+
+        Wrapped in try/except so legacy-bootstrap paths whose DBs
+        pre-date the ``messages`` table (older v8-era schemas built
+        by hand in tests) don't crash the migration chain — fresh DBs
+        always have the table via SCHEMA_V1.
+        """
+        assert self._conn is not None
+        try:
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_messages_dedup"
+                " ON messages(sender, recipient, msg_type, created_at)"
+            )
+            _log.info("v12: added idx_messages_dedup composite index")
+        except sqlite3.OperationalError:
+            _log.debug("v12 migration: messages table missing, skipping index")
 
     def close(self) -> None:
         """Close the database connection."""

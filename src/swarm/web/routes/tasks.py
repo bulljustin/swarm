@@ -468,12 +468,27 @@ async def _fetch_attachment_bytes(
     try:
         async with sess.get(url, headers=headers, timeout=_aiohttp.ClientTimeout(total=30)) as resp:
             if resp.status != 200:
-                console_log(f"Attachment fetch failed ({resp.status})")
+                _log.warning(
+                    "attachment fetch failed (msg=%s att=%s status=%d)",
+                    msg_id,
+                    att_id,
+                    resp.status,
+                )
                 return ""
             data = await resp.json()
             return data.get("contentBytes", "")
-    except Exception as exc:
-        console_log(f"Attachment fetch error: {exc}")
+    except (_aiohttp.ClientError, TimeoutError) as exc:
+        # Network / Graph-side transients — log forensically so ops can
+        # correlate a missing attachment with a Graph outage, but keep
+        # the empty-string sentinel so the renderer skips this attachment
+        # rather than crashing the whole message render.
+        _log.warning(
+            "attachment fetch error (msg=%s att=%s): %s",
+            msg_id,
+            att_id,
+            exc,
+            exc_info=True,
+        )
         return ""
 
 

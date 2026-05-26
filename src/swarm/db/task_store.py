@@ -14,6 +14,45 @@ if TYPE_CHECKING:
 
 _log = get_logger("db.task_store")
 
+# Explicit column list — must stay in sync with :func:`_task_to_row`
+# (the canonical write shape) and :func:`_row_to_task` (the canonical
+# read shape).  Used by :meth:`SqliteTaskStore.load` instead of
+# ``SELECT *`` so adding a column elsewhere in the schema (e.g. a v9+
+# audit field we don't materialize on SwarmTask) doesn't bloat the
+# in-memory rows we load at startup.
+_TASK_COLUMNS = (
+    "id",
+    "number",
+    "title",
+    "description",
+    "status",
+    "priority",
+    "task_type",
+    "assigned_worker",
+    "created_at",
+    "updated_at",
+    "completed_at",
+    "resolution",
+    "block_reason",
+    "tags",
+    "attachments",
+    "depends_on",
+    "source_email_id",
+    "jira_key",
+    "is_cross_project",
+    "source_worker",
+    "target_worker",
+    "dependency_type",
+    "acceptance_criteria",
+    "context_refs",
+    "cost_budget",
+    "cost_spent",
+    "learnings",
+    "verification_status",
+    "verification_reason",
+    "verification_reopen_count",
+)
+
 
 class SqliteTaskStore(BaseStore):
     """Persist tasks to the unified swarm.db.
@@ -55,7 +94,7 @@ class SqliteTaskStore(BaseStore):
 
     def load(self) -> dict[str, SwarmTask]:
         """Load all tasks from the DB."""
-        rows = self._db.fetchall("SELECT * FROM tasks")
+        rows = self._db.fetchall(f"SELECT {', '.join(_TASK_COLUMNS)} FROM tasks")
         tasks: dict[str, SwarmTask] = {}
         for row in rows:
             try:

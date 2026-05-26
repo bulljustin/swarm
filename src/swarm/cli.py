@@ -2143,8 +2143,13 @@ async def _wait_for_daemon_sha_change(port: int, token: str, pre_sha: str, timeo
                             return f"Daemon restarted with new build ({new_sha})."
                         if not pre_sha:
                             return "Daemon is back up."
-        except Exception:
-            pass  # still restarting
+        except (aiohttp.ClientError, TimeoutError):
+            # Expected during the exec window: the old process drops
+            # the listener and the new one isn't accepting yet.  Anything
+            # else (bug in the parse path, hostname surprise) should
+            # not be silently swallowed — let it propagate so callers
+            # see it rather than spin forever.
+            pass
         await asyncio.sleep(0.5)
     return (
         f"Restart triggered but daemon did not return new build within {timeout:.0f}s — "

@@ -10,6 +10,47 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.26] - 2026-05-26
+
+### Features
+
+### Changes
+
+- **Audit remediation pass** — closes 9 findings from a full-project
+  audit (#5, #7, #8, #9, #17, #18, #19, #20, #21):
+  - **DB perf (v12 schema migration)**: new `idx_messages_dedup`
+    composite index on `messages(sender, recipient, msg_type,
+    created_at)` matching the dedup probe in `MessageStore.send()` —
+    previously a full table scan on every inter-worker message.
+  - **DB perf**: `MessageStore.broadcast()` now runs one batched
+    dedup `SELECT` for all recipients instead of N per-recipient
+    probes.
+  - **DB perf**: `config_store._save_workers` returns the worker
+    name→id map so `_save_groups` can skip its redundant
+    `SELECT id, name FROM workers`. Per-worker approval-rule deletes
+    now batch into a single `DELETE … WHERE owner_id IN (…)` instead
+    of one delete per worker.
+  - **DB perf**: `SqliteTaskStore.load()` uses an explicit
+    `_TASK_COLUMNS` list instead of `SELECT *` — narrower row
+    payload + insulates the read path from schema additions that
+    aren't materialized on `SwarmTask`.
+- **Type safety**: removed all 6 `# type: ignore[attr-defined]`
+  markers in `server/routes/{workers,queen}.py` by typing
+  parameters against the proper `Worker` / `SwarmDaemon` types.
+- **API clarity**: `_validate_draft_email_args` now returns
+  `(fields|None, error_message)` instead of `fields | str` —
+  clearer branching at the call site.
+
+### Fixes
+
+- **CLI restart polling**: narrowed `except Exception` to
+  `(aiohttp.ClientError, TimeoutError)` so genuine bugs in the
+  health-check loop surface instead of being silently swallowed.
+- **Email attachment fetch**: promoted error logging from
+  `console_log` to `_log.warning(..., exc_info=True)` so ops have
+  forensic anchors for missing attachments; narrowed `except` to
+  network errors only.
+
 ## [2026.5.25.14] - 2026-05-25
 
 ### Features

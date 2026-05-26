@@ -981,9 +981,17 @@ def _handle_report_blocker(
 _DraftEmailFields = tuple[list[str], str, str, list[str] | None, str, str]
 
 
-def _validate_draft_email_args(args: dict[str, Any]) -> _DraftEmailFields | str:
-    """Validate + coerce swarm_draft_email inputs. Returns tuple on success,
-    or a short error string on failure."""
+def _validate_draft_email_args(
+    args: dict[str, Any],
+) -> tuple[_DraftEmailFields | None, str]:
+    """Validate + coerce swarm_draft_email inputs.
+
+    Returns ``(fields, "")`` on success and ``(None, error_message)`` on
+    failure.  The two-tuple shape lets callers branch on the first
+    element being None instead of doing an ``isinstance(x, str)`` type
+    guard against a union return — clearer at the call site and easier
+    to type.
+    """
     to_raw = args.get("to")
     subject = (args.get("subject") or "").strip()
     body = args.get("body") or ""
@@ -992,23 +1000,23 @@ def _validate_draft_email_args(args: dict[str, Any]) -> _DraftEmailFields | str:
     reason = (args.get("reason") or "").strip()
 
     if not isinstance(to_raw, list) or not to_raw:
-        return "Missing 'to' — must be a non-empty list of addresses."
+        return None, "Missing 'to' — must be a non-empty list of addresses."
     if not all(isinstance(a, str) and a.strip() for a in to_raw):
-        return "'to' entries must be non-empty strings."
+        return None, "'to' entries must be non-empty strings."
     if not subject:
-        return "Missing 'subject'."
+        return None, "Missing 'subject'."
     if not body:
-        return "Missing 'body'."
+        return None, "Missing 'body'."
     if body_type not in ("text", "html"):
-        return "'body_type' must be 'text' or 'html'."
+        return None, "'body_type' must be 'text' or 'html'."
     if cc_raw and not (
         isinstance(cc_raw, list) and all(isinstance(a, str) and a.strip() for a in cc_raw)
     ):
-        return "'cc' must be a list of non-empty strings."
+        return None, "'cc' must be a list of non-empty strings."
 
     to_list = [a.strip() for a in to_raw]
     cc_list = [a.strip() for a in cc_raw] if cc_raw else None
-    return to_list, subject, body, cc_list, body_type, reason
+    return (to_list, subject, body, cc_list, body_type, reason), ""
 
 
 def _handle_draft_email(
@@ -1030,10 +1038,10 @@ def _handle_draft_email(
     """
     from swarm.drones.log import LogCategory, SystemAction
 
-    validated = _validate_draft_email_args(args)
-    if isinstance(validated, str):
-        return [{"type": "text", "text": validated}]
-    to_list, subject, body, cc_list, body_type, reason = validated
+    fields, error = _validate_draft_email_args(args)
+    if fields is None:
+        return [{"type": "text", "text": error}]
+    to_list, subject, body, cc_list, body_type, reason = fields
 
     graph_mgr = getattr(d, "graph_mgr", None)
     if graph_mgr is None or not graph_mgr.is_connected():
