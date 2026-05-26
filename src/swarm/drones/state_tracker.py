@@ -471,43 +471,6 @@ class WorkerStateTracker:
             return True
         return False
 
-    def _check_context_pressure(self, worker: Worker) -> None:
-        """Warn or inject /compact when context fill exceeds thresholds."""
-        if worker.state != WorkerState.BUZZING or worker.compacting:
-            return
-        pct = worker.context_pct
-        if pct <= 0:
-            return
-
-        cfg = self.drone_config
-        critical = cfg.context_critical_threshold
-        warning = cfg.context_warning_threshold
-
-        if pct >= critical:
-            # Inject /compact via deferred action
-            from swarm.drones.log import LogCategory, SystemAction
-
-            self.log.add(
-                SystemAction.QUEEN_BLOCKED,
-                worker.name,
-                f"context critical ({pct:.0%}) — injecting /compact",
-                category=LogCategory.DRONE,
-            )
-            worker.compacting = True
-            self._decision_executor._deferred_actions.append(
-                ("compact", worker, None, worker.state, worker.process)
-            )
-        elif pct >= warning and not worker._context_warned:
-            from swarm.drones.log import LogCategory, SystemAction
-
-            self.log.add(
-                SystemAction.QUEEN_BLOCKED,
-                worker.name,
-                f"context warning ({pct:.0%}) — approaching limit",
-                category=LogCategory.DRONE,
-            )
-            worker._context_warned = True
-
     def _poll_sleeping_throttled(self, worker: Worker, cmd: str) -> tuple[bool, bool] | None:
         """Lightweight poll for throttled sleeping workers.
 
@@ -637,12 +600,10 @@ class WorkerStateTracker:
 
         self._prev_states[worker.name] = worker.state
 
-        # Per-worker health detectors live in ``swarm.drones.detectors``;
-        # ``_check_context_pressure`` is the last inline check pending
-        # Phase 3 of the state-tracker-refactor spec.
+        # Per-worker health detectors live in ``swarm.drones.detectors``.
         self._detectors.context_files.check(worker, content)
         self._detectors.diminishing.check(worker)
-        self._check_context_pressure(worker)
+        self._detectors.pressure.check(worker)
         self._detectors.recovery.check(worker, content)
         self._detectors.rate_limit.check(worker, content)
 

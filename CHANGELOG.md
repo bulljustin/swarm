@@ -10,6 +10,34 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.26.4] - 2026-05-26
+
+### Features
+
+### Changes
+
+- **WorkerStateTracker refactor — Phase 3 (final)**: extract
+  `ContextPressureCheck` (synchronous, BUZZING-only) into
+  `swarm.drones.detectors.context_pressure_check`. The new detector
+  owns the inline-per-poll path that warns at `context_warning_threshold`
+  and queues a deferred `/compact` at `context_critical_threshold`.
+  - `state_tracker.py` shrunk to ~643 lines, 25 methods. All 5
+    health detectors now extracted; `_poll_single_worker` now just
+    sequences `detector.check()` calls.
+  - `WorkerHealthDetectors` gains a `pressure` field.
+  - Pre-refactor `TestContextPressure` (4 tests) migrated from
+    `tests/test_state_tracker.py` into the new
+    `tests/drones/detectors/test_context_pressure_check.py`, plus 2
+    new edge-case tests (non-BUZZING skip, zero-pct skip).
+  - `# DUPLICATION:` comment added to the new module pointing at the
+    periodic `ContextPressureWatcher` in `drones/context_pressure.py`
+    — overlap is intentional today (sync check catches in-poll
+    critical excursions before the watcher's next sweep) but should
+    be untangled in a follow-up audit task.
+  - No behavior change.
+
+### Fixes
+
 ## [2026.5.26.3] - 2026-05-26
 
 ### Features

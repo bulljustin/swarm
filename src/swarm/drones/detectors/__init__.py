@@ -5,8 +5,11 @@ and acts on its own internal state — adding buzz-log entries, emitting
 events, or queueing deferred actions on the shared DecisionExecutor.
 
 This package is the home of the WorkerStateTracker refactor
-(``docs/specs/state-tracker-refactor.md``). Phase 3 will add
-:class:`ContextPressureCheck` to :class:`WorkerHealthDetectors`.
+(``docs/specs/state-tracker-refactor.md``). All five detectors are now
+extracted: context_files, diminishing, rate_limit, recovery, and
+pressure (the synchronous BUZZING-only context-pressure check —
+distinct from the periodic :class:`ContextPressureWatcher` in
+``swarm/drones/context_pressure.py``).
 """
 
 from __future__ import annotations
@@ -14,12 +17,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from swarm.drones.detectors.context_files import ContextFileTracker
+from swarm.drones.detectors.context_pressure_check import ContextPressureCheck
 from swarm.drones.detectors.context_recovery import ContextRecoveryDetector
 from swarm.drones.detectors.diminishing_returns import DiminishingReturnsDetector
 from swarm.drones.detectors.rate_limit import RateLimitDetector
 
 __all__ = [
     "ContextFileTracker",
+    "ContextPressureCheck",
     "ContextRecoveryDetector",
     "DiminishingReturnsDetector",
     "RateLimitDetector",
@@ -40,3 +45,4 @@ class WorkerHealthDetectors:
     diminishing: DiminishingReturnsDetector
     rate_limit: RateLimitDetector
     recovery: ContextRecoveryDetector
+    pressure: ContextPressureCheck

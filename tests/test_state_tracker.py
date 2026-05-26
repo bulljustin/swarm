@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 from swarm.config import DroneConfig
 from swarm.drones.detectors import (
     ContextFileTracker,
+    ContextPressureCheck,
     ContextRecoveryDetector,
     DiminishingReturnsDetector,
     RateLimitDetector,
@@ -68,6 +69,11 @@ def _make_tracker(
         diminishing=DiminishingReturnsDetector(log=log, emit=emit),
         rate_limit=RateLimitDetector(log=log, emit=emit),
         recovery=ContextRecoveryDetector(log=log, decision_executor=decision_executor, emit=emit),
+        pressure=ContextPressureCheck(
+            log=log,
+            decision_executor=decision_executor,
+            drone_config=drone_config or DroneConfig(),
+        ),
     )
     tracker = WorkerStateTracker(
         workers=workers,
@@ -239,47 +245,10 @@ class TestShouldThrottleSleeping:
         assert tracker._should_throttle_sleeping(worker) is False
 
 
-class TestContextPressure:
-    def test_below_threshold_no_action(self) -> None:
-        cfg = DroneConfig(context_warning_threshold=0.7, context_critical_threshold=0.9)
-        tracker, _ = _make_tracker(drone_config=cfg)
-        worker = _make_worker("w1", state=WorkerState.BUZZING)
-        worker.context_pct = 0.5
-        tracker._check_context_pressure(worker)
-        assert tracker._decision_executor._deferred_actions == []
-        assert worker._context_warned is False
-
-    def test_warning_threshold_logs_once(self) -> None:
-        cfg = DroneConfig(context_warning_threshold=0.7, context_critical_threshold=0.95)
-        tracker, _ = _make_tracker(drone_config=cfg)
-        worker = _make_worker("w1", state=WorkerState.BUZZING)
-        worker.context_pct = 0.75
-        tracker._check_context_pressure(worker)
-        assert worker._context_warned is True
-        # Second call doesn't re-fire because the flag is set.
-        tracker._check_context_pressure(worker)
-        # No /compact yet — only warning.
-        compacts = [a for a in tracker._decision_executor._deferred_actions if a[0] == "compact"]
-        assert compacts == []
-
-    def test_critical_threshold_queues_compact(self) -> None:
-        cfg = DroneConfig(context_warning_threshold=0.7, context_critical_threshold=0.9)
-        tracker, _ = _make_tracker(drone_config=cfg)
-        worker = _make_worker("w1", state=WorkerState.BUZZING)
-        worker.context_pct = 0.95
-        tracker._check_context_pressure(worker)
-        assert worker.compacting is True
-        compacts = [a for a in tracker._decision_executor._deferred_actions if a[0] == "compact"]
-        assert len(compacts) == 1
-
-    def test_already_compacting_is_skipped(self) -> None:
-        cfg = DroneConfig(context_critical_threshold=0.9)
-        tracker, _ = _make_tracker(drone_config=cfg)
-        worker = _make_worker("w1", state=WorkerState.BUZZING)
-        worker.context_pct = 0.95
-        worker.compacting = True
-        tracker._check_context_pressure(worker)
-        assert tracker._decision_executor._deferred_actions == []
+# ``TestContextPressure`` migrated to
+# ``tests/drones/detectors/test_context_pressure_check.py`` as part of
+# Phase 3 of ``docs/specs/state-tracker-refactor.md`` — the logic now
+# lives in ContextPressureCheck.
 
 
 class TestCleanupDeadWorker:
