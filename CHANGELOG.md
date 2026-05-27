@@ -10,6 +10,37 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.27.8] - 2026-05-27
+
+### Features
+
+### Changes
+
+- **Refactor — `pty/holder.py` SRP split (task #516).** First of the
+  5 deferred refactors from #514. `PtyHolder` was 1058 LOC and mixed
+  two concerns: PTY process lifecycle (spawn / kill / signal /
+  resize / snapshot / inherit) AND command-routing dispatch
+  (`_dispatch_cmd` + 11 `_cmd_*` methods + `_CMD_HANDLERS` ClassVar).
+  - Extracted dispatch into new `src/swarm/pty/command_handler.py`
+    containing `PtyCommandHandler` — receives a `PtyHolder` reference
+    in `__init__` and routes lifecycle ops through `self.holder.*`.
+  - `PtyHolder.__init__` now instantiates `self._cmds = PtyCommandHandler(self)`;
+    `_handle_command` calls `self._cmds.dispatch(msg)` instead of the
+    removed `self._dispatch_cmd(msg)`.
+  - Wire protocol unchanged — daemon still sends `{"cmd": "<name>", ...}`
+    and receives `{"ok": bool, ...}`. The 11 dispatch keys
+    (ping / version / spawn / list / write / signal / resize / kill /
+    snapshot / shutdown / restart_in_place) are identical.
+  - `holder.py` shrinks from 1058 → 851 LOC (-207).
+  - Tests updated: `tests/test_holder.py:945` and
+    `tests/test_pool.py:351` retarget `PtyCommandHandler._CMD_HANDLERS`
+    in place of the prior `PtyHolder._CMD_HANDLERS` references.
+  - 4 children of #514 remain queued (#517 proposal extraction,
+    #518 mcp/tools split, #519 mcp/queen_tools split, #520 MCP
+    TypedDict sweep).
+
+### Fixes
+
 ## [2026.5.27.7] - 2026-05-27
 
 ### Features

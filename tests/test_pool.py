@@ -343,14 +343,16 @@ class TestHolderVersionDrift:
         ``version`` command shipped) returns ``{"ok": false, "error":
         "unknown cmd"}``. Pool records unknown=True but must not assert
         drift and must not break the connection."""
+        from swarm.pty.command_handler import PtyCommandHandler
+
         h = PtyHolder(socket_path)
         # Strip the version handler so the holder behaves like a pre-skew-
-        # detection build. We rebind the class attribute on this instance's
-        # class so the test's handler map matches what an old deploy would
-        # ship.
-        original_handlers = PtyHolder._CMD_HANDLERS
+        # detection build. Task #516 moved the dispatch table from
+        # ``PtyHolder._CMD_HANDLERS`` to ``PtyCommandHandler._CMD_HANDLERS``;
+        # patch the new home so the test still simulates an old deploy.
+        original_handlers = PtyCommandHandler._CMD_HANDLERS
         monkeypatch.setattr(
-            PtyHolder,
+            PtyCommandHandler,
             "_CMD_HANDLERS",
             {k: v for k, v in original_handlers.items() if k != "version"},
         )

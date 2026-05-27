@@ -945,7 +945,11 @@ class TestRestartInPlace:
     def test_restart_in_place_dispatched_via_handler_registry(self):
         """The CMD handler must be registered so older holders (which
         return ``unknown command``) can be cleanly distinguished from
-        newer ones that handle the request."""
-        from swarm.pty.holder import PtyHolder as _PH
+        newer ones that handle the request.
 
-        assert "restart_in_place" in _PH._CMD_HANDLERS
+        Task #516 moved the ``_CMD_HANDLERS`` dict from ``PtyHolder``
+        to ``PtyCommandHandler``; the test follows the move.
+        """
+        from swarm.pty.command_handler import PtyCommandHandler
+
+        assert "restart_in_place" in PtyCommandHandler._CMD_HANDLERS
