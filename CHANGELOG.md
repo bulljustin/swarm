@@ -10,6 +10,44 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.27.9] - 2026-05-27
+
+### Features
+
+### Changes
+
+- **Refactor — `mcp/tools.py` split by concern (task #518).** Third of
+  the deferred refactors from #514. `tools.py` was 1985 LOC and mixed
+  the MCP `TOOLS` schema list (~687 LOC of pure data), 14 handler
+  functions + helpers (~1100 LOC), and the dispatcher + source-drift
+  probe.
+  - Decomposed into 13 modules under `src/swarm/mcp/handlers/`:
+    `_messages.py` (check_messages / send_message / note_to_queen +
+    schemas), `_queen_relay.py` (the auto-relay + Attention-thread
+    helpers `_messages.py` shares with `note_to_queen`), `_blockers.py`,
+    `_park.py`, `_email.py`, `_tasks.py` (task_status + complete_task),
+    `_create.py` (create_task — its own module so neither file blows
+    the per-module budget), `_task_format.py` (the formatters used by
+    task_status), `_files.py`, `_learnings.py`, `_playbooks.py`,
+    `_progress.py`, `_batch.py`. Each domain module owns BOTH its
+    schemas and its handler(s); `tools.py` is now a thin aggregator.
+  - `src/swarm/mcp/tools.py` shrinks from 1985 → 212 LOC. Every
+    handler module is ≤ 300 LOC.
+  - Wire protocol unchanged: 14 worker tools + 15 Queen tools (29
+    total) carry over verbatim through `TOOLS` / `_HANDLERS`. The
+    dispatcher (`handle_tool_call`), the source-drift probe
+    (`tools_source_drift`), and `_TOOL_NAMES` remain in `tools.py`.
+  - Zero test file edits required. The handlers tests reach for as
+    private symbols (`_handle_check_messages`, `_handle_park_task`,
+    `_handle_get_playbooks`, `_handle_create_task`, `_handle_complete_task`,
+    `_handle_task_status`) are re-exported from `tools.py` so every
+    existing call site keeps working.
+  - 2 children of #514 remain queued (#519 mcp/queen_tools split,
+    #520 MCP TypedDict sweep). #517 (proposal extraction) was
+    closed earlier as already-done.
+
+### Fixes
+
 ## [2026.5.27.8] - 2026-05-27
 
 ### Features
