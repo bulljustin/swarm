@@ -10,6 +10,43 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.27.4] - 2026-05-27
+
+### Features
+
+### Changes
+
+- **Test coverage gap-fill — phase 2: storage layer**. Close two
+  silent-correctness gaps in the SQLite-backed stores.
+  - **`db/buzz_store.py`** had **0% direct coverage** — every prod
+    write goes through the `DroneLog` facade (mocked in most tests)
+    and reads through dashboard routes (also mocked). New
+    `tests/db/test_buzz_store.py` adds 29 direct tests covering
+    insert + round-trip, `load_recent` chronology, all 7 query
+    filter combinations + AND, search across detail/worker_name +
+    limit, count under each filter, rule_analytics aggregation +
+    since cutoff, `mark_overridden` noop semantics, and prune
+    TTL deletion. Module coverage: **0% → 99%** (1 line — a
+    sqlite Row passthrough branch — uncovered by design).
+  - **`db/task_history.py`** sat at **45%** with the search /
+    get_events / prune surfaces unexplored. New
+    `tests/db/test_task_history.py` adds 18 direct tests covering
+    chronological order, per-task filtering, limit, malformed
+    action skip-on-load (`KeyError`/`ValueError` swallowed —
+    protects the dashboard when an old daemon wrote an action enum
+    the new build dropped), search across all filter combinations +
+    pagination, and prune by TTL. The tests seed parent `tasks`
+    rows directly so the `task_history.task_id REFERENCES tasks(id)`
+    FK constraint passes — production gets this via
+    `task_board.create() → task_history.append()` sequence. Module
+    coverage: **45% → 100%**.
+  - **Suite metrics**: 4656 → 4703 (+47 new tests). Overall
+    coverage **75.24% → 75.62%**.
+  - **Up next**: phase 3 (web routes) — `web/routes/login.py` 0%,
+    `web/routes/tasks.py` 31%, `server/routes/events.py` 15%.
+
+### Fixes
+
 ## [2026.5.27.3] - 2026-05-27
 
 ### Features
