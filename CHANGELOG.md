@@ -10,6 +10,49 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.27.3] - 2026-05-27
+
+### Features
+
+### Changes
+
+- **Test coverage gate + refactor-adjacent gap-fill (audit items
+  #10–#16, phase 1)**: pin a coverage floor and close the gaps the
+  recent refactors exposed.
+  - **Coverage gate**: new `[tool.coverage.run]` + `[tool.coverage.report]`
+    in `pyproject.toml` with `fail_under = 75` (lifted from the
+    initial 74 baseline after the gap-fills below put real headroom
+    on the gate). `/check` auto-detects the threshold and runs
+    pytest with `--cov`; future drops below 75% break the build.
+  - **`apply_llms` + `apply_provider_overrides`** had **0% direct
+    coverage** post-extraction (the ConfigManager refactor moved
+    them out of the `_apply_*` daemon-side path the old tests hit).
+    New `tests/server/config_appliers/test_llms.py` adds 21 direct
+    tests covering body-shape validation, happy-path cfg writes, the
+    `display_name` strip + string-command split, and the
+    regex-validation guard on tuning fields. Module coverage:
+    **10% → 100%**.
+  - **`TaskCoordinator`** had 66% coverage post-extraction — the
+    daemon-proxy tests reached the public surface but not the
+    branch-y internals. New `tests/server/test_task_coordinator.py`
+    adds 30 direct tests covering `check_ownership` across all 4
+    `OwnershipMode` paths, `start_task` / `assign_task` validation
+    errors, `spawn_handoff_task` (#442) creation +
+    `source_worker` tagging + error swallowing,
+    `auto_resolve_attention_for_task` thread sweep,
+    `auto_start_next_assigned` early-return branches, and
+    `retry_draft_reply`'s 4 error paths. Module coverage:
+    **66% → 91%**.
+  - **Suite metrics**: 4605 → 4656 passing (+51 new tests, same
+    pre-existing `test_ws_auth` flake). Overall coverage
+    74.81% → 75.24%.
+  - **Up next** (per the three-step test-gap plan): storage layer
+    (`db/buzz_store.py` 0%, `db/migrate.py` 54%), then web routes
+    (`web/routes/login.py` 0%, `web/routes/tasks.py` 31%,
+    `server/routes/events.py` 15%).
+
+### Fixes
+
 ## [2026.5.27.2] - 2026-05-27
 
 ### Features

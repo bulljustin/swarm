@@ -1,6 +1,6 @@
 [project]
 name = "swarm-ai"
-version = "2026.5.27.2"
+version = "2026.5.27.3"
 description = "A hive-mind for Claude Code agents — web orchestrator"
 readme = "README.md"
 license = "MIT"
@@ -66,6 +66,27 @@ filterwarnings = [
     "ignore::pytest.PytestUnraisableExceptionWarning",
     "ignore::pytest.PytestCollectionWarning",
     "ignore::RuntimeWarning:collections",
+]
+
+# Coverage: enforce a floor so the suite catches regressions in the
+# branches that have explicit tests.  Initial gate landed at 74 to
+# match the pre-gap-fill baseline; lifted to 75 after the
+# refactor-adjacent fills (apply_llms 10%→100%, task_coordinator
+# 66%→91%) put real headroom on the gate.  Lift further as the
+# storage / route gap-fills land.
+[tool.coverage.run]
+source = ["src/swarm"]
+branch = false  # branch coverage is noisy on aiohttp handler dispatch
+
+[tool.coverage.report]
+fail_under = 75
+show_missing = false
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
 ]
 
 [tool.mypy]
