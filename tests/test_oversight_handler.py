@@ -71,10 +71,17 @@ def _make_handler(
     queen: Any = None,
     task_board: Any = None,
     capture_outputs: dict[str, str] | None = None,
+    get_provider: Any = None,
 ) -> tuple[OversightHandler, MagicMock, DroneLog]:
     log = DroneLog()
     emit = MagicMock()
     captured = capture_outputs or {}
+
+    def _default_get_provider(_w: Worker) -> Any:
+        prov = MagicMock()
+        prov.is_long_running_tool_active.return_value = False
+        return prov
+
     handler = OversightHandler(
         workers=workers,
         log=log,
@@ -83,6 +90,7 @@ def _make_handler(
         oversight_monitor=monitor,
         emit=emit,
         capture_outputs=lambda: dict(captured),
+        get_provider=get_provider or _default_get_provider,
     )
     return handler, emit, log
 

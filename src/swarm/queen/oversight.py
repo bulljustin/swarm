@@ -12,6 +12,8 @@ from swarm.logging import get_logger
 from swarm.worker.worker import WorkerState
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from swarm.queen.queen import Queen
     from swarm.tasks.board import TaskBoard
     from swarm.tasks.task import SwarmTask
@@ -101,14 +103,26 @@ class OversightMonitor:
         self._call_timestamps.append(time.time())
 
     def check_prolonged_buzzing(
-        self, worker: Worker, task: SwarmTask | None
+        self, worker: Worker, task: SwarmTask | None, tool_active: bool = False
     ) -> OversightSignal | None:
-        """Check if a worker has been BUZZING too long without progress."""
+        """Check if a worker has been BUZZING too long without progress.
+
+        ``tool_active`` is ``True`` when the worker's PTY shows an in-flight
+        long-running tool (background shell/monitor, active subagent, or a
+        dynamic workflow). Such work legitimately holds the worker in BUZZING
+        for the tool's whole duration, so we suppress the signal — firing it
+        would burn a Queen oversight call and possibly inject a note into a
+        worker that is making real progress. ``_buzzing_notified`` is left
+        untouched so a genuine stall after the tool completes still fires.
+        """
         threshold_s = self._config.buzzing_threshold_minutes * 60
 
         if worker.state != WorkerState.BUZZING:
             # Worker is no longer buzzing — clear the notification flag
             self._buzzing_notified.discard(worker.name)
+            return None
+
+        if tool_active:
             return None
 
         if worker.state_duration < threshold_s:
@@ -184,8 +198,15 @@ class OversightMonitor:
         workers: list[Worker],
         task_board: TaskBoard | None,
         worker_outputs: dict[str, str] | None = None,
+        is_long_running: Callable[[Worker, str], bool] | None = None,
     ) -> list[OversightSignal]:
-        """Run all heuristic checks and return detected signals."""
+        """Run all heuristic checks and return detected signals.
+
+        ``is_long_running`` lets the caller (which owns the per-worker provider)
+        report whether a worker's PTY shows an in-flight long-running tool, so
+        prolonged-BUZZING is suppressed for it. Passing the provider predicate
+        in keeps oversight provider-neutral (no CLI-specific imports here).
+        """
         if not self.enabled:
             return []
 
@@ -198,13 +219,16 @@ class OversightMonitor:
                 active = task_board.active_tasks_for_worker(worker.name)
                 task = active[0] if active else None
 
-            # Signal 1: prolonged buzzing
-            sig = self.check_prolonged_buzzing(worker, task)
+            output = worker_outputs.get(worker.name, "")
+
+            # Signal 1: prolonged buzzing (suppressed while a long-running
+            # tool — e.g. a dynamic workflow — legitimately holds BUZZING)
+            tool_active = bool(is_long_running and is_long_running(worker, output))
+            sig = self.check_prolonged_buzzing(worker, task, tool_active=tool_active)
             if sig:
                 signals.append(sig)
 
             # Signal 2: task drift (only with task + output)
-            output = worker_outputs.get(worker.name, "")
             sig = self.check_task_drift(worker, task, output)
             if sig:
                 signals.append(sig)

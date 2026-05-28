@@ -88,6 +88,31 @@ _RE_BACKGROUND_RUNNING = re.compile(
     r"|auto\s+mode\s+on\s*[·.]?\s*\d+\s+(?:monitors?|shells?))",
     re.IGNORECASE,
 )
+# Claude Code dynamic workflows (Opus 4.8+, the ``Workflow`` tool) fan out
+# ephemeral subagents from a deterministic script. A launched workflow runs in
+# the *background*: the tool call returns immediately, the worker's turn yields,
+# and the prompt reappears while subagents keep executing — so the worker LOOKS
+# idle but is not free for new work and will be re-invoked on completion. Claude
+# Code's footer status tray surfaces the in-flight run; Swarm must read that as
+# BUZZING (same rationale as ``_RE_BACKGROUND_RUNNING`` for shells/monitors) so
+# it doesn't nudge, auto-complete, or assign over the worker mid-workflow.
+#
+# Surface forms verified against the installed Claude Code binary (v2.1.156):
+#   Footer tray (count-prefixed):
+#     "1 background dynamic workflow"  / "3 background dynamic workflows"   (local)
+#     "1 remote dynamic workflow"      / "2 remote dynamic workflows"       (cloud)
+#     "2 dynamic workflows"            (inline footer count component)
+#   Progress line:
+#     "running dynamic workflow"
+# The count prefix is what distinguishes an ACTIVE run from non-running mentions
+# we must NOT match — "Run a dynamic workflow?" (a permission prompt → WAITING),
+# the "(dynamic workflow)" command tag, and "No dynamic workflows in this
+# session." (the /workflows history browser).
+_RE_WORKFLOW_ACTIVE = re.compile(
+    r"\b\d+\s+(?:(?:background|remote)\s+)?dynamic\s+workflows?\b"
+    r"|running\s+dynamic\s+workflow\b",
+    re.IGNORECASE,
+)
 _RE_PLAN_MARKERS = re.compile(
     r"plan file|plan saved|"
     r"proceed with (?:this|the) plan|"
@@ -218,9 +243,11 @@ class ClaudeProvider(LLMProvider):
         if "esc to interrupt" in tail_wide:
             return WorkerState.BUZZING
 
-        # Background work (monitor or shell) present → treat as BUZZING even
-        # though the prompt is visible.  The worker isn't available for new work.
-        if _RE_BACKGROUND_RUNNING.search(tail_wide):
+        # Background work (monitor, shell, or in-flight dynamic workflow)
+        # present → treat as BUZZING even though the prompt is visible. The
+        # worker isn't available for new work and will be re-invoked when the
+        # background work completes.
+        if _RE_BACKGROUND_RUNNING.search(tail_wide) or _RE_WORKFLOW_ACTIVE.search(tail_wide):
             return WorkerState.BUZZING
 
         if _RE_PROMPT.search(tail_narrow) or "? for shortcuts" in tail_narrow:
@@ -296,6 +323,24 @@ class ClaudeProvider(LLMProvider):
         if not tail:
             return False
         return bool(_RE_ACCEPT_EDITS.search(tail))
+
+    def is_long_running_tool_active(self, content: str) -> bool:
+        """Whether the wide PTY tail shows in-flight long-running work.
+
+        Background shells/monitors, an active subagent, or an in-flight
+        dynamic workflow. Mirrors the BUZZING-routing checks in
+        ``classify_output`` so callers outside the classifier (oversight
+        prolonged-BUZZING suppression, the stuck-BUZZING safety net) share
+        one definition of "the worker is busy with a long-running tool".
+        """
+        tail = self._get_tail(content, TAIL_WIDE)
+        if not tail:
+            return False
+        return bool(
+            _RE_BACKGROUND_RUNNING.search(tail)
+            or _RE_SUBAGENT_ACTIVE.search(tail)
+            or _RE_WORKFLOW_ACTIVE.search(tail)
+        )
 
     def has_idle_prompt(self, content: str) -> bool:
         tail = self._get_tail(content, TAIL_NARROW)
@@ -443,9 +488,10 @@ class ClaudeProvider(LLMProvider):
         if buzzing is not None:
             return buzzing
 
-        # Background work (monitor or shell) present → BUZZING (same rationale
-        # as classify_output — prompt may be visible but worker isn't free).
-        if _RE_BACKGROUND_RUNNING.search(tail_wide):
+        # Background work (monitor, shell, or in-flight dynamic workflow)
+        # present → BUZZING (same rationale as classify_output — prompt may be
+        # visible but the worker isn't free).
+        if _RE_BACKGROUND_RUNNING.search(tail_wide) or _RE_WORKFLOW_ACTIVE.search(tail_wide):
             return WorkerState.BUZZING
 
         # Prompt: require styled (non-default fg) prompt character

@@ -115,6 +115,19 @@ class LLMProvider(ABC):
         """Check if output shows a normal idle input prompt."""
         return False
 
+    def is_long_running_tool_active(self, content: str) -> bool:
+        """Whether the PTY tail shows an in-flight long-running tool.
+
+        Covers background work the worker can't be interrupted for or
+        assigned over: background shells/monitors, active subagents, and
+        in-flight dynamic workflows. Used to hold a worker in BUZZING
+        (not idle) and to suppress prolonged-BUZZING oversight while such
+        work runs. Default ``False`` — only providers whose CLI renders
+        these indicators (Claude Code) override this, which self-gates
+        the behaviour for other providers.
+        """
+        return False
+
     def has_empty_prompt(self, content: str) -> bool:
         """Check if output shows an empty input prompt ready for continuation."""
         return False

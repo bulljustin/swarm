@@ -333,6 +333,75 @@ class TestClassifyOutputBackgroundRunning:
         )
         assert _provider.classify_output("claude", content) == WorkerState.WAITING
 
+
+# ---------------------------------------------------------------------------
+# BUZZING — in-flight dynamic workflow (Claude Code Opus 4.8+, the Workflow
+# tool). A launched workflow runs in the background: the prompt reappears
+# while subagents execute, so the worker LOOKS idle but is not free and will
+# be re-invoked on completion. Swarm must read the footer tray as BUZZING.
+#
+# Surface forms verified against the installed Claude Code binary (v2.1.156):
+#   "1 background dynamic workflow"  / "3 background dynamic workflows"  (local)
+#   "1 remote dynamic workflow"      / "2 remote dynamic workflows"      (cloud)
+#   "2 dynamic workflows"            (inline footer count)
+#   "running dynamic workflow"       (progress line)
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyOutputDynamicWorkflow:
+    def test_background_dynamic_workflow_singular_marks_buzzing(self):
+        content = "Workflow launched.\n> \n1 background dynamic workflow · /workflows\n"
+        assert _provider.classify_output("claude", content) == WorkerState.BUZZING
+
+    def test_background_dynamic_workflows_plural_marks_buzzing(self):
+        content = "Some earlier output.\n> \n3 background dynamic workflows · /workflows\n"
+        assert _provider.classify_output("claude", content) == WorkerState.BUZZING
+
+    def test_remote_dynamic_workflow_marks_buzzing(self):
+        content = "Cloud run started.\n> \n2 remote dynamic workflows · /workflows\n"
+        assert _provider.classify_output("claude", content) == WorkerState.BUZZING
+
+    def test_inline_footer_count_marks_buzzing(self):
+        content = "> \n2 dynamic workflows · /workflows to view dynamic workflow runs\n"
+        assert _provider.classify_output("claude", content) == WorkerState.BUZZING
+
+    def test_running_dynamic_workflow_progress_marks_buzzing(self):
+        content = "> \nrunning dynamic workflow find-flaky-tests\n"
+        assert _provider.classify_output("claude", content) == WorkerState.BUZZING
+
+    def test_run_a_dynamic_workflow_permission_prompt_is_not_buzzing(self):
+        """A permission prompt ('Run a dynamic workflow?') is WAITING, not an
+        active run — no count prefix, so the workflow regex must not match."""
+        content = (
+            "Run a dynamic workflow?\n"
+            "❯ 1. Yes\n"
+            "  2. No, and tell Claude what to do differently (esc)\n"
+        )
+        assert _provider.classify_output("claude", content) == WorkerState.WAITING
+
+    def test_no_dynamic_workflows_history_line_is_not_buzzing(self):
+        """The /workflows browser line 'No dynamic workflows in this session.'
+        must not be read as an active run."""
+        content = "No dynamic workflows in this session.\n> \n? for shortcuts\n"
+        assert _provider.classify_output("claude", content) == WorkerState.RESTING
+
+    def test_dynamic_workflow_command_tag_is_not_buzzing(self):
+        """The '(dynamic workflow)' command-list tag (no count) is not active."""
+        content = "/find-flaky-tests (dynamic workflow)\n> \n? for shortcuts\n"
+        assert _provider.classify_output("claude", content) == WorkerState.RESTING
+
+    def test_is_long_running_tool_active_true_for_workflow(self):
+        content = "> \n1 background dynamic workflow · /workflows\n"
+        assert _provider.is_long_running_tool_active(content) is True
+
+    def test_is_long_running_tool_active_true_for_background_shell(self):
+        content = "> \nauto mode on · 2 shells · ↓ to manage\n"
+        assert _provider.is_long_running_tool_active(content) is True
+
+    def test_is_long_running_tool_active_false_for_plain_idle(self):
+        content = "Done.\n> \n? for shortcuts\n"
+        assert _provider.is_long_running_tool_active(content) is False
+
     def test_numbered_list_in_output_not_choice_menu(self):
         """Numbered list in markdown output should not false-positive as WAITING.
 

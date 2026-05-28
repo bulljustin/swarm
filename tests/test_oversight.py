@@ -127,6 +127,51 @@ class TestOversightMonitor:
         sig = monitor.check_prolonged_buzzing(w, None)
         assert sig is None
 
+    def test_prolonged_buzzing_suppressed_when_tool_active(self) -> None:
+        """A long-running tool (e.g. an in-flight dynamic workflow) holds the
+        worker in BUZZING by design — the signal must be suppressed even well
+        past the threshold, and the notify flag must stay clear."""
+        monitor = OversightMonitor(OversightConfig(buzzing_threshold_minutes=15.0))
+        w = _make_worker(state_since=time.time() - 1200)  # 20 min
+        sig = monitor.check_prolonged_buzzing(w, None, tool_active=True)
+        assert sig is None
+        # Flag untouched: once the tool finishes a genuine stall can still fire.
+        sig2 = monitor.check_prolonged_buzzing(w, None, tool_active=False)
+        assert sig2 is not None
+
+    def test_collect_signals_suppresses_prolonged_buzzing_for_workflow(self) -> None:
+        """collect_signals routes the per-worker is_long_running predicate into
+        the prolonged-buzzing check, suppressing the signal for a workflow."""
+        from swarm.providers.claude import ClaudeProvider
+
+        provider = ClaudeProvider()
+        monitor = OversightMonitor(OversightConfig(buzzing_threshold_minutes=15.0))
+        w = _make_worker(state_since=time.time() - 1200)  # 20 min, above threshold
+        outputs = {"w1": "> \n1 background dynamic workflow · /workflows\n"}
+        signals = monitor.collect_signals(
+            [w],
+            None,
+            worker_outputs=outputs,
+            is_long_running=lambda worker, out: provider.is_long_running_tool_active(out),
+        )
+        assert all(s.signal_type != SignalType.PROLONGED_BUZZING for s in signals)
+
+    def test_collect_signals_fires_prolonged_buzzing_without_workflow(self) -> None:
+        """Genuinely stuck worker (no workflow indicator) still fires."""
+        from swarm.providers.claude import ClaudeProvider
+
+        provider = ClaudeProvider()
+        monitor = OversightMonitor(OversightConfig(buzzing_threshold_minutes=15.0))
+        w = _make_worker(state_since=time.time() - 1200)
+        outputs = {"w1": "Working on it...\nesc to interrupt\n"}
+        signals = monitor.collect_signals(
+            [w],
+            None,
+            worker_outputs=outputs,
+            is_long_running=lambda worker, out: provider.is_long_running_tool_active(out),
+        )
+        assert any(s.signal_type == SignalType.PROLONGED_BUZZING for s in signals)
+
     def test_task_drift_no_task(self) -> None:
         monitor = OversightMonitor(OversightConfig())
         w = _make_worker()

@@ -232,6 +232,7 @@ class DronePilot(EventEmitter):
             oversight_monitor=self._oversight,
             emit=self.emit,
             capture_outputs=self._coordination.capture_worker_outputs,
+            get_provider=self._get_provider,
         )
         self._pressure_mgr = PressureManager(
             workers=self.workers,

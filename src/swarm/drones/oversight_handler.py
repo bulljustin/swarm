@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from swarm.drones.log import DroneLog
+    from swarm.providers import LLMProvider
     from swarm.queen.oversight import OversightMonitor, OversightResult
     from swarm.queen.queen import Queen
     from swarm.tasks.board import TaskBoard
@@ -36,6 +37,7 @@ class OversightHandler:
         oversight_monitor: OversightMonitor | None,
         emit: Callable[..., None],
         capture_outputs: Callable[[], dict[str, str]],
+        get_provider: Callable[[Worker], LLMProvider],
     ) -> None:
         self.workers = workers
         self.log = log
@@ -44,10 +46,25 @@ class OversightHandler:
         self._oversight = oversight_monitor
         self._emit = emit
         self._capture_outputs = capture_outputs
+        self._get_provider = get_provider
 
     def set_oversight(self, monitor: OversightMonitor | None) -> None:
         """Update the oversight monitor reference."""
         self._oversight = monitor
+
+    def _worker_tool_active(self, worker: Worker, output: str) -> bool:
+        """Whether the worker's PTY shows an in-flight long-running tool.
+
+        Delegates to the worker's own provider so detection stays
+        provider-specific (dynamic workflows are a Claude Code feature; other
+        providers' default returns False). Guarded so a provider lookup or
+        classify error never breaks the oversight cycle.
+        """
+        try:
+            return self._get_provider(worker).is_long_running_tool_active(output)
+        except Exception:
+            _log.warning("is_long_running_tool_active failed for %s", worker.name, exc_info=True)
+            return False
 
     async def oversight_cycle(self) -> bool:
         """Run oversight signal detection and Queen evaluation.
@@ -59,7 +76,12 @@ class OversightHandler:
             return False
 
         worker_outputs = self._capture_outputs()
-        signals = monitor.collect_signals(self.workers, self.task_board, worker_outputs)
+        signals = monitor.collect_signals(
+            self.workers,
+            self.task_board,
+            worker_outputs,
+            is_long_running=self._worker_tool_active,
+        )
 
         # Operator-blocked-stall guard (deterministic, Queen-free so it
         # survives a rate-limit storm): raise ONE park proposal per

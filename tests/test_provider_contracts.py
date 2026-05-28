@@ -214,3 +214,23 @@ class TestParseUsage:
 
     def test_non_claude_parse_usage_returns_none(self, non_claude_provider: LLMProvider) -> None:
         assert non_claude_provider.parse_usage({"usage": {"input_tokens": 1}}) is None
+
+
+# --- is_long_running_tool_active: Claude detects dynamic workflows; others don't ---
+
+
+class TestLongRunningToolActive:
+    """Dynamic workflows are a Claude Code feature. The base default returns
+    False, which self-gates the behaviour for all other providers — even if
+    Claude's footer string somehow appeared in their output."""
+
+    _WORKFLOW = "> \n1 background dynamic workflow · /workflows\n"
+
+    def test_claude_detects_workflow(self) -> None:
+        assert get_provider("claude").is_long_running_tool_active(self._WORKFLOW) is True
+
+    def test_non_claude_default_false(self, non_claude_provider: LLMProvider) -> None:
+        assert non_claude_provider.is_long_running_tool_active(self._WORKFLOW) is False
+
+    def test_claude_false_for_plain_idle(self) -> None:
+        assert get_provider("claude").is_long_running_tool_active("Done.\n> \n") is False

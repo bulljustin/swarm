@@ -10,6 +10,44 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.28.7] - 2026-05-28
+
+### Features
+
+- **Coexistence guardrails for Claude Code dynamic workflows (Opus 4.8+, the
+  `Workflow` tool) running inside a worker.** A launched dynamic workflow runs
+  in the *background*: the tool call returns, the worker's turn yields, and the
+  prompt reappears while subagents execute — so the worker *looks idle* but is
+  not free and will be re-invoked on completion. Without a guardrail Swarm
+  would nudge it, propose completion, or assign a new task over the in-flight
+  run.
+  - New `_RE_WORKFLOW_ACTIVE` in `providers/claude.py` matches the Claude Code
+    footer status tray (verified against the installed binary v2.1.156):
+    `N background dynamic workflow(s)`, `N remote dynamic workflow(s)`,
+    `running dynamic workflow`. The count prefix distinguishes an *active* run
+    from `"Run a dynamic workflow?"` (a WAITING prompt) and
+    `"No dynamic workflows in this session."` (the /workflows history browser).
+  - Both classify paths now route an in-flight workflow to `BUZZING` (same path
+    as background shells/monitors), which cascades to suppress IdleWatcher
+    nudges, premature auto-completion, and new-task assignment. The
+    stuck-BUZZING safety net (`state_tracker._has_active_turn_signal`) treats
+    the footer as a live turn so a long workflow isn't force-flipped to RESTING.
+  - New `LLMProvider.is_long_running_tool_active()` (base returns `False`;
+    `ClaudeProvider` implements via the background/subagent/workflow regexes).
+    `OversightMonitor.check_prolonged_buzzing` is suppressed for a worker whose
+    PTY shows an in-flight long-running tool (threaded through
+    `OversightHandler` → `pilot._get_provider`), so a legit long workflow
+    doesn't burn a Queen oversight call or inject a note.
+  - **Provider-gated by construction:** the base default returns `False`, so
+    Gemini/Codex/OpenCode workers (which don't run dynamic workflows) are
+    unaffected. No PressureManager change — the existing rate-limit detector
+    already covers the token-concentration failure mode (documented in
+    CLAUDE.md).
+
+### Changes
+
+### Fixes
+
 ## [2026.5.28.6] - 2026-05-28
 
 ### Features

@@ -458,7 +458,11 @@ class WorkerStateTracker:
         narrow tail intentionally rejects those stale matches.
         """
         from swarm.providers.base import TAIL_NARROW
-        from swarm.providers.claude import _RE_BACKGROUND_RUNNING, _RE_SUBAGENT_ACTIVE
+        from swarm.providers.claude import (
+            _RE_BACKGROUND_RUNNING,
+            _RE_SUBAGENT_ACTIVE,
+            _RE_WORKFLOW_ACTIVE,
+        )
 
         if not content:
             return False
@@ -468,6 +472,11 @@ class WorkerStateTracker:
         if _RE_BACKGROUND_RUNNING.search(tail):
             return True
         if _RE_SUBAGENT_ACTIVE.search(tail):
+            return True
+        # In-flight dynamic workflow (footer tray) — keeps the worker
+        # BUZZING; without this the stuck-BUZZING safety net would flip a
+        # long workflow run to RESTING after the threshold.
+        if _RE_WORKFLOW_ACTIVE.search(tail):
             return True
         return False
 

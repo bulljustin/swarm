@@ -349,6 +349,33 @@ the client honours reconnect contracts.
 - `WAITING` — worker showing a choice/approval prompt
 - `STUNG` — worker's Claude process has exited
 
+### Dynamic workflows coexistence
+
+Claude Code's **dynamic workflows** (Opus 4.8+, the `Workflow` tool) fan out
+ephemeral subagents *inside one worker's session* — orthogonal to Swarm, which
+orchestrates *across* workers. A launched workflow runs in the **background**:
+the tool call returns immediately, the worker's turn yields, the prompt
+reappears, and a completion notification re-invokes the worker later. During
+that window the worker *looks idle* but is not free for new work.
+
+Swarm reads the in-flight run as `BUZZING` so it doesn't nudge, auto-complete,
+or assign over the worker mid-workflow. The signal is the Claude Code footer
+tray — verified against the binary as e.g. `1 background dynamic workflow`,
+`2 remote dynamic workflows`, `running dynamic workflow` — matched by
+`_RE_WORKFLOW_ACTIVE` (`providers/claude.py`). The classifier routes it to
+`BUZZING` (same path as background shells/monitors), the stuck-BUZZING safety
+net (`state_tracker._has_active_turn_signal`) treats it as a live turn, and
+`OversightMonitor.check_prolonged_buzzing` is suppressed for it via
+`LLMProvider.is_long_running_tool_active`. All of this is **provider-gated by
+construction**: the base provider returns `False`, so Gemini/Codex/OpenCode
+workers (which don't run dynamic workflows) are unaffected.
+
+**Token caveat:** a workflow concentrates many subagents' token burn into one
+worker, which can trip the **subscription** rate limit faster than a normal
+turn. No special handling is needed — the existing `rate_limit` detector
+(`providers/claude.py` `_RE_RATE_LIMIT`, wired in `state_tracker`) already
+catches Claude's rate-limit banners regardless of what produced them.
+
 ### PTY Integration
 - Output read from in-process ring buffer via `worker.process.get_content()`
 - Input sent via `worker.process.send_keys()` / `send_enter()` / `send_interrupt()`

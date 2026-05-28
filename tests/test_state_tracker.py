@@ -284,3 +284,27 @@ class TestCleanupDeadWorker:
             assert "dead" not in d
         assert "dead" not in tracker._suspended
         assert "dead" not in tracker._drone_continued
+
+
+class TestHasActiveTurnSignal:
+    """The stuck-BUZZING safety net must recognise an in-flight dynamic
+    workflow (footer tray) as an active turn — otherwise a long workflow run
+    would be force-flipped to RESTING after the threshold."""
+
+    def test_workflow_footer_is_active(self) -> None:
+        tracker, _ = _make_tracker()
+        content = "> \n1 background dynamic workflow · /workflows\n"
+        assert tracker._has_active_turn_signal(content) is True
+
+    def test_remote_workflow_footer_is_active(self) -> None:
+        tracker, _ = _make_tracker()
+        content = "> \n2 remote dynamic workflows · /workflows\n"
+        assert tracker._has_active_turn_signal(content) is True
+
+    def test_esc_to_interrupt_is_active(self) -> None:
+        tracker, _ = _make_tracker()
+        assert tracker._has_active_turn_signal("working\nesc to interrupt\n") is True
+
+    def test_plain_idle_prompt_is_not_active(self) -> None:
+        tracker, _ = _make_tracker()
+        assert tracker._has_active_turn_signal("Done.\n> \n? for shortcuts\n") is False
