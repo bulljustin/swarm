@@ -4183,20 +4183,42 @@
         try { entry.term.refresh(0, Math.max(0, (entry.term.rows || 1) - 1)); } catch (e) {}
     }
 
-    function focusInlineTerm(name, entry) {
+    /** Move keyboard focus into a terminal entry's xterm input. No
+     *  activeTermWorker guard — callers (worker views AND the Queen embed,
+     *  which is intentionally never activeTermWorker) gate it themselves. */
+    function focusTermEntryNow(entry) {
         if (!entry || !entry.term) return;
-        if (activeTermWorker !== name) return;
         if (window.matchMedia('(pointer: coarse)').matches) return;
         try {
             if (entry.term.textarea) entry.term.textarea.focus({preventScroll: true});
             entry.term.focus();
-            setTimeout(function() {
-                try {
-                    if (entry.term.textarea) entry.term.textarea.focus({preventScroll: true});
-                    entry.term.focus();
-                } catch (e2) {}
-            }, 80);
         } catch (e) {}
+    }
+
+    function focusInlineTerm(name, entry) {
+        if (!entry || !entry.term) return;
+        if (activeTermWorker !== name) return;
+        focusTermEntryNow(entry);
+        setTimeout(function() {
+            if (activeTermWorker !== name) return;
+            focusTermEntryNow(entry);
+        }, 80);
+    }
+
+    /** True when the keyboard focus is inside a terminal's xterm input —
+     *  either the active worker terminal (inlineTerm) OR the Queen live
+     *  embed (which is deliberately not activeTermWorker, so it needs its
+     *  own check). Global keyboard-shortcut handlers use this to yield to
+     *  the terminal instead of firing dashboard shortcuts. */
+    function isTermInputFocused() {
+        var ae = document.activeElement;
+        if (!ae) return false;
+        if (inlineTerm && inlineTerm.textarea && ae === inlineTerm.textarea) return true;
+        if (queenEmbedMounted) {
+            var q = termCache.get('queen');
+            if (q && q.term && q.term.textarea && ae === q.term.textarea) return true;
+        }
+        return false;
     }
 
     /** Show a cached entry in the detail panel. */
@@ -4439,6 +4461,18 @@
                     }
                 }, d);
             });
+        });
+
+        // Terminal-first view: drop the cursor into the Queen PTY so the
+        // operator can type immediately (mirrors showTermEntry's worker
+        // focus). Staged re-focus survives the WS reset/reconnect above;
+        // mobile/coarse-pointer is skipped inside focusTermEntryNow.
+        [80, 250].forEach(function (d) {
+            setTimeout(function () {
+                if (queenEmbedMounted && entry.container.parentNode === holder) {
+                    focusTermEntryNow(entry);
+                }
+            }, d);
         });
     }
 
@@ -9499,7 +9533,7 @@
             }
         }
         // When terminal is focused, block browser Ctrl+L/D (address bar / bookmark)
-        if (inlineTerm && inlineTerm.textarea && document.activeElement === inlineTerm.textarea) {
+        if (isTermInputFocused()) {
             if (e.ctrlKey && !e.metaKey && !e.altKey && /^[ld]$/i.test(e.key)) {
                 e.preventDefault();
             }
@@ -9527,7 +9561,7 @@
         // When modal terminal is attached, let everything through to xterm
         if (document.getElementById('terminal-modal').style.display !== 'none') return;
         // When inline terminal is focused, let everything through
-        if (inlineTerm && inlineTerm.textarea && document.activeElement === inlineTerm.textarea) return;
+        if (isTermInputFocused()) return;
 
         switch (e.key.toLowerCase()) {
             case 'b': toggleDrones(); break;
@@ -9546,7 +9580,7 @@
     document.addEventListener('keydown', function(e) {
         if (e.key !== '?' || e.altKey || e.ctrlKey || e.metaKey) return;
         if (document.getElementById('terminal-modal').style.display !== 'none') return;
-        if (inlineTerm && inlineTerm.textarea && document.activeElement === inlineTerm.textarea) return;
+        if (isTermInputFocused()) return;
         var ae = document.activeElement;
         var tag = ae && ae.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -9763,7 +9797,7 @@
     document.addEventListener('keydown', function(e) {
         if (e.key !== 'Escape') return;
         // Skip if inline terminal textarea is focused
-        if (inlineTerm && inlineTerm.textarea && document.activeElement === inlineTerm.textarea) return;
+        if (isTermInputFocused()) return;
 
         // Close resource popover first (lightweight, not a modal)
         var resPop = document.getElementById('resource-popover');
