@@ -10,6 +10,37 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.30] - 2026-05-30
+
+### Features
+
+- **Queen quick-action bar is now config-driven and styled to match the worker
+  action bar.** The embedded Queen's buttons were small, all-grey, and
+  hardcoded in the template — visually and structurally inconsistent with the
+  worker action bar (full-size, color-coded, config-driven). New
+  `queen_action_buttons` config — model `QueenActionButtonConfig` +
+  `DEFAULT_QUEEN_ACTION_BUTTONS`, wired through the loader, serialization,
+  known-keys, DB config store (load + save), the server config applier, and
+  package exports — managed the **same way** as worker `action_buttons`. The
+  Queen bar now renders from that config using the same `btn btn-{style}`
+  classes (Kill = danger, etc.) while keeping the Queen's own actions
+  (Continue, 1, 2, Get Latest, Clear Session, Kill, Revive, Refresh) wired
+  through the existing `ccQueen*` handlers — no JS change. The field defaults
+  to the populated set, so DBs predating it still render the bar (no
+  regression).
+
+### Changes
+
+### Fixes
+
+- **Mobile: worker status no longer goes stale after the tab is backgrounded.**
+  The WebSocket reconnect (`ws.onopen`) and resume (`onAppFocus`) catch-up
+  paths refreshed tasks/buzz/pipelines but not the worker list/status, so on
+  mobile — where the tab is frequently backgrounded (screen lock, app switch),
+  dropping the WS and pausing background polling — worker state badges stayed
+  stale on resume. Both paths now also call `refreshWorkers()` +
+  `refreshStatus()`, mirroring the live `'state'` WS handler.
+
 ## [2026.5.28.8] - 2026-05-28
 
 ### Features

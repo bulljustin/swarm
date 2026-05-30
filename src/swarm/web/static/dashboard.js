@@ -442,7 +442,13 @@
             document.getElementById('ws-dot').classList.add('connected');
             if (wasDisconnected && reconnectDelay > 1000) {
                 showToast('Connection restored');
-                // Refresh all panels — WS messages may have been lost during disconnect
+                // Refresh all panels — WS messages may have been lost during disconnect.
+                // Worker 'state' events are among the lost messages, so the worker
+                // list/status must be re-synced too — otherwise it shows stale state
+                // after a reconnect (the common mobile case: tab backgrounded → WS
+                // dropped → resumes with stale worker badges).
+                refreshWorkers();
+                refreshStatus();
                 refreshTasks();
                 refreshBuzzLog();
                 if (typeof refreshPipelines === 'function') refreshPipelines();
@@ -9648,7 +9654,13 @@
         });
         ensureMainWsConnected();
         if (_restarting) _restarting = false;
-        // Catch up on any missed WS events while tab was hidden
+        // Catch up on any missed WS events while tab was hidden. Worker state
+        // ('state' events) goes stale while a mobile tab is backgrounded (WS
+        // closed/throttled), so re-sync the worker list/status on resume — the
+        // reconnecting WS may land after this, and background polling is paused
+        // while hidden, so without this the worker badges stay stale.
+        refreshWorkers();
+        refreshStatus();
         refreshTasks();
         refreshBuzzLog();
         // Re-sync PWA badge with current proposal count (not buzz count)

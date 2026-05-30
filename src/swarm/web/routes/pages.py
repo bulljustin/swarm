@@ -103,6 +103,17 @@ async def handle_dashboard(request: web.Request) -> dict[str, Any]:
             }
             for b in d.config.action_buttons
         ],
+        "queen_action_buttons": [
+            {
+                "label": b.label,
+                "action": b.action,
+                "value": b.value,
+                "style": b.style,
+                "show_mobile": b.show_mobile,
+                "show_desktop": b.show_desktop,
+            }
+            for b in d.config.queen_action_buttons
+        ],
         "task_buttons": [
             {
                 "label": b.label,

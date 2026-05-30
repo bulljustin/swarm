@@ -221,6 +221,18 @@ def _serialize_optional(config: HiveConfig, data: dict[str, Any]) -> None:
             }
             for b in config.action_buttons
         ]
+    if config.queen_action_buttons:
+        data["queen_action_buttons"] = [
+            {
+                "label": b.label,
+                "action": b.action,
+                "value": b.value,
+                "style": b.style,
+                "show_mobile": b.show_mobile,
+                "show_desktop": b.show_desktop,
+            }
+            for b in config.queen_action_buttons
+        ]
     if config.task_buttons:
         data["task_buttons"] = [
             {

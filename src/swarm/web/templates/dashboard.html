@@ -150,14 +150,18 @@
                         <div class="cc-panel-body cc-ask-queen-body">
                             <div id="cc-queen-term-holder" class="cc-queen-term-holder"></div>
                             <div class="cc-queen-actions">
-                                <button class="btn btn-sm btn-secondary" data-action="ccQueenRefresh" title="Reconnect the Queen terminal">Refresh</button>
-                                <button class="btn btn-sm btn-secondary" data-action="ccQueenVerb" data-qverb="continue">Continue</button>
-                                <button class="btn btn-sm btn-secondary" data-action="ccQueenSend" data-qmsg="1">1</button>
-                                <button class="btn btn-sm btn-secondary" data-action="ccQueenSend" data-qmsg="2">2</button>
-                                <button class="btn btn-sm btn-secondary" data-action="ccQueenSend" data-qmsg="/get-latest">Get Latest</button>
-                                <button class="btn btn-sm btn-secondary" data-action="ccQueenSend" data-qmsg="/clear">Clear Session</button>
-                                <button class="btn btn-sm btn-danger" data-action="ccQueenVerb" data-qverb="kill">Kill</button>
-                                <button class="btn btn-sm btn-secondary" data-action="ccQueenVerb" data-qverb="revive">Revive</button>
+                                {# Config-driven Queen quick-actions — same button styling as the
+                                   worker action bar (config: queen_action_buttons). action maps to
+                                   the ccQueen* handlers; refresh=ccQueenRefresh, fullscreen=
+                                   ccQueenFullscreen, verb=ccQueenVerb(data-qverb), send=ccQueenSend(data-qmsg). #}
+                                {% for btn in queen_action_buttons %}
+                                <button type="button"
+                                        class="btn btn-{{ btn.style }}{% if not btn.show_mobile %} hide-mobile{% endif %}{% if not btn.show_desktop %} hide-desktop{% endif %}"
+                                        {% if btn.action == 'send' %}data-action="ccQueenSend" data-qmsg="{{ btn.value }}"
+                                        {% elif btn.action == 'verb' %}data-action="ccQueenVerb" data-qverb="{{ btn.value }}"
+                                        {% elif btn.action == 'fullscreen' %}data-action="ccQueenFullscreen"
+                                        {% else %}data-action="ccQueenRefresh" title="Reconnect the Queen terminal"{% endif %}>{{ btn.label }}</button>
+                                {% endfor %}
                             </div>
                         </div>
                     </div>

@@ -26,6 +26,7 @@ _KNOWN_TOP_KEYS = {
     "workflows",
     "tool_buttons",
     "action_buttons",
+    "queen_action_buttons",
     "task_buttons",
     "llms",
     "provider_overrides",

@@ -6,6 +6,7 @@ import yaml
 
 from swarm.config import (
     DEFAULT_ACTION_BUTTONS,
+    DEFAULT_QUEEN_ACTION_BUTTONS,
     DEFAULT_TASK_BUTTONS,
     ActionButtonConfig,
     CustomLLMConfig,
@@ -15,6 +16,7 @@ from swarm.config import (
     HiveConfig,
     JiraConfig,
     NotifyConfig,
+    QueenActionButtonConfig,
     QueenConfig,
     TaskButtonConfig,
     ToolButtonConfig,
@@ -913,6 +915,87 @@ class TestActionButtons:
         assert loaded.action_buttons[1].label == "Deploy"
         assert loaded.action_buttons[1].command == "/deploy"
         assert loaded.action_buttons[1].show_mobile is False
+
+
+class TestQueenActionButtons:
+    def test_default_queen_action_buttons_constant(self):
+        """DEFAULT_QUEEN_ACTION_BUTTONS mirrors the previously-hardcoded set."""
+        labels = [b.label for b in DEFAULT_QUEEN_ACTION_BUTTONS]
+        assert labels == [
+            "Refresh",
+            "Continue",
+            "1",
+            "2",
+            "Get Latest",
+            "Clear Session",
+            "Kill",
+            "Revive",
+        ]
+        kill = next(b for b in DEFAULT_QUEEN_ACTION_BUTTONS if b.label == "Kill")
+        assert kill.action == "verb"
+        assert kill.value == "kill"
+        assert kill.style == "danger"
+
+    def test_hiveconfig_default_is_populated(self):
+        """A bare HiveConfig carries the Queen defaults so a blob-absent DB load
+        (existing installs) still renders the Queen quick-action bar."""
+        cfg = HiveConfig()
+        assert len(cfg.queen_action_buttons) == len(DEFAULT_QUEEN_ACTION_BUTTONS)
+        assert cfg.queen_action_buttons[0].label == "Refresh"
+
+    def test_no_config_gets_defaults(self, tmp_path):
+        """Absent from YAML → defaults are used."""
+        path = _write_yaml(tmp_path, {})
+        cfg = _parse_config(path)
+        assert [b.label for b in cfg.queen_action_buttons] == [
+            b.label for b in DEFAULT_QUEEN_ACTION_BUTTONS
+        ]
+
+    def test_explicit_queen_action_buttons_parsed(self, tmp_path):
+        """Explicit YAML replaces the defaults and parses all fields."""
+        data = {
+            "queen_action_buttons": [
+                {"label": "Go", "action": "verb", "value": "continue", "style": "queen"},
+                {"label": "Reset", "action": "send", "value": "/clear", "show_mobile": False},
+            ]
+        }
+        path = _write_yaml(tmp_path, data)
+        cfg = _parse_config(path)
+        assert len(cfg.queen_action_buttons) == 2
+        assert cfg.queen_action_buttons[0].label == "Go"
+        assert cfg.queen_action_buttons[0].action == "verb"
+        assert cfg.queen_action_buttons[0].value == "continue"
+        assert cfg.queen_action_buttons[0].style == "queen"
+        assert cfg.queen_action_buttons[1].action == "send"
+        assert cfg.queen_action_buttons[1].show_mobile is False
+
+    def test_serialize_round_trip(self, tmp_path):
+        """queen_action_buttons survives save → reload."""
+        cfg = HiveConfig(
+            queen_action_buttons=[
+                QueenActionButtonConfig(label="Go", action="verb", value="continue"),
+                QueenActionButtonConfig(label="Kill", action="verb", value="kill", style="danger"),
+            ]
+        )
+        out = tmp_path / "swarm.yaml"
+        save_config(cfg, str(out))
+        loaded = _parse_config(out)
+        assert len(loaded.queen_action_buttons) == 2
+        assert loaded.queen_action_buttons[0].label == "Go"
+        assert loaded.queen_action_buttons[0].value == "continue"
+        assert loaded.queen_action_buttons[1].style == "danger"
+
+    def test_serialize_config_includes_queen_buttons(self):
+        """serialize_config emits the queen_action_buttons blob (DB-save path)."""
+        cfg = HiveConfig(
+            queen_action_buttons=[
+                QueenActionButtonConfig(label="Go", action="verb", value="continue")
+            ]
+        )
+        data = serialize_config(cfg)
+        assert "queen_action_buttons" in data
+        assert data["queen_action_buttons"][0]["label"] == "Go"
+        assert data["queen_action_buttons"][0]["value"] == "continue"
 
 
 class TestTaskButtons:

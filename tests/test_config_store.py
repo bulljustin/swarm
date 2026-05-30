@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from swarm.config.models import (
+    DEFAULT_QUEEN_ACTION_BUTTONS,
     ActionButtonConfig,
     CoordinationConfig,
     DroneApprovalRule,
@@ -19,6 +20,7 @@ from swarm.config.models import (
     OversightConfig,
     PlaybookConfig,
     ProviderTuning,
+    QueenActionButtonConfig,
     QueenConfig,
     ResourceConfig,
     StateThresholds,
@@ -483,6 +485,36 @@ class TestRoundTrip:
         assert loaded.queen.min_confidence == 0.8
         assert loaded.queen.oversight.enabled is False
         assert loaded.queen.oversight.buzzing_threshold_minutes == 30.0
+
+    def test_queen_action_buttons_round_trip(self, db: SwarmDB) -> None:
+        """Custom queen_action_buttons survive save → load."""
+        original = HiveConfig(
+            queen_action_buttons=[
+                QueenActionButtonConfig(label="Go", action="verb", value="continue"),
+                QueenActionButtonConfig(label="Kill", action="verb", value="kill", style="danger"),
+            ]
+        )
+        save_config_to_db(db, original)
+        loaded = load_config_from_db(db)
+        assert loaded is not None
+        assert [b.label for b in loaded.queen_action_buttons] == ["Go", "Kill"]
+        assert loaded.queen_action_buttons[1].value == "kill"
+        assert loaded.queen_action_buttons[1].style == "danger"
+
+    def test_queen_action_buttons_default_when_blob_absent(self, db: SwarmDB) -> None:
+        """An existing DB with no queen_action_buttons blob still yields the
+        populated defaults (no regression for installs predating this field)."""
+        # Seed some user data so load_config_from_db doesn't return None, but
+        # never write a queen_action_buttons blob.
+        original = HiveConfig(workers=[WorkerConfig(name="w1", path="/tmp/w1")])
+        save_config_to_db(db, original)
+        db.execute("DELETE FROM config WHERE key = 'queen_action_buttons'")
+        db.commit()
+        loaded = load_config_from_db(db)
+        assert loaded is not None
+        assert [b.label for b in loaded.queen_action_buttons] == [
+            b.label for b in DEFAULT_QUEEN_ACTION_BUTTONS
+        ]
 
     def test_notifications_round_trip(self, db: SwarmDB) -> None:
         original = HiveConfig(

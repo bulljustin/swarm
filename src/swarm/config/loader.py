@@ -27,6 +27,7 @@ from swarm.config._known_keys import (
 )
 from swarm.config.models import (
     DEFAULT_ACTION_BUTTONS,
+    DEFAULT_QUEEN_ACTION_BUTTONS,
     DEFAULT_TASK_BUTTONS,
     ActionButtonConfig,
     ConfigError,
@@ -42,6 +43,7 @@ from swarm.config.models import (
     OversightConfig,
     PlaybookConfig,
     ProviderTuning,
+    QueenActionButtonConfig,
     QueenConfig,
     ResourceConfig,
     StateThresholds,
@@ -445,6 +447,24 @@ def _parse_config(path: Path) -> HiveConfig:
                 ActionButtonConfig(label=tb.label, command=tb.command, style="secondary")
             )
 
+    # Parse queen_action_buttons -- config-driven Queen quick-action bar
+    queen_action_buttons_raw = data.get("queen_action_buttons", [])
+    if queen_action_buttons_raw:
+        queen_action_buttons = [
+            QueenActionButtonConfig(
+                label=b.get("label", ""),
+                action=b.get("action", "send"),
+                value=b.get("value", ""),
+                style=b.get("style", "secondary"),
+                show_mobile=b.get("show_mobile", True),
+                show_desktop=b.get("show_desktop", True),
+            )
+            for b in queen_action_buttons_raw
+            if isinstance(b, dict) and b.get("label")
+        ]
+    else:
+        queen_action_buttons = list(DEFAULT_QUEEN_ACTION_BUTTONS)
+
     # Parse task_buttons -- configurable task-list buttons
     task_buttons_raw = data.get("task_buttons", [])
     if task_buttons_raw:
@@ -522,6 +542,7 @@ def _parse_config(path: Path) -> HiveConfig:
         workflows=workflows,
         tool_buttons=tool_buttons,
         action_buttons=action_buttons,
+        queen_action_buttons=queen_action_buttons,
         task_buttons=task_buttons,
         custom_llms=custom_llms,
         provider_overrides=provider_overrides,

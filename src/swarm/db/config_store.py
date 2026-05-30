@@ -26,6 +26,7 @@ from swarm.config.models import (
     OversightConfig,
     PlaybookConfig,
     ProviderTuning,
+    QueenActionButtonConfig,
     QueenConfig,
     ResourceConfig,
     StateThresholds,
@@ -56,6 +57,7 @@ _JSON_KEYS = {
     "workflows",
     "tool_buttons",
     "action_buttons",
+    "queen_action_buttons",
     "task_buttons",
     "custom_llms",
     "provider_overrides",
@@ -293,6 +295,7 @@ _DATACLASS_BLOBS: dict[str, tuple[str, type]] = {
 _BUTTON_BLOBS: dict[str, tuple[str, type]] = {
     "tool_buttons": ("tool_buttons", ToolButtonConfig),
     "action_buttons": ("action_buttons", ActionButtonConfig),
+    "queen_action_buttons": ("queen_action_buttons", QueenActionButtonConfig),
     "task_buttons": ("task_buttons", TaskButtonConfig),
 }
 
