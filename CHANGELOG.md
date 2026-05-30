@@ -10,6 +10,43 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.30.2] - 2026-05-30
+
+### Features
+
+### Changes
+
+- **The embedded Queen's quick-action bar now reuses the worker
+  `action_buttons` config** (the one on the advanced config tab) instead of the
+  separate `queen_action_buttons` section added in 2026.5.30 — so the Queen
+  matches the workers and is managed in one place. The separate
+  `queen_action_buttons` config (model, loader, serialization, known-keys, DB
+  store, server applier, package exports) is removed. The Queen bar renders
+  from `action_buttons` with the same `btn btn-{style}` styling; each worker
+  action is routed to the Queen via the explicit-name `ccQueen*` handlers
+  (revive/kill → `ccQueenVerb`, refresh → `ccQueenRefresh`, export → new
+  `ccQueenExport`, custom command → `ccQueenSend`, blank → continue). The
+  "Ask Queen" action is skipped on the Queen herself (asking the Queen to ask
+  the Queen is circular).
+
+### Fixes
+
+- **Active workers no longer shown RESTING/SLEEPING while mid-turn (state
+  misclassification).** Claude Code's interruptible-turn footer
+  "… · esc to interrupt" **truncates to "… · esc to…"** at narrow PTY widths
+  (observed live on `my-rcg` / `budgetbug`, Claude Code v2.1.158). The state
+  classifier keyed off the full literal, so when an active worker's animated
+  spinner glyph wasn't on-screen at poll time (between animation frames or
+  while a tool result rendered), it fell through to RESTING and flickered
+  BUZZING↔RESTING. The classifier now matches a truncation-tolerant interrupt
+  hint (`_RE_INTERRUPT_HINT`: `esc to interrupt` / `esc to stop` / truncated
+  `esc to…`) in both the text and styled paths and in the stuck-BUZZING safety
+  net. The hint is interrupt-specific (it must NOT match choice-menu footers'
+  "Esc to cancel") and, on the styled path, must be dim-styled (a non-dim
+  "esc to interrupt" is pasted text, not the live footer). Idle auto-mode
+  footers show "· ← for agents" / "· ? for shortcuts" (never "esc to"), so idle
+  workers stay RESTING.
+
 ## [2026.5.30] - 2026-05-30
 
 ### Features

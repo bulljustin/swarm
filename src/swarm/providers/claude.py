@@ -66,6 +66,23 @@ _RE_SUBAGENT_ACTIVE = re.compile(
     r"|[·✢✳✶✻✽*⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+\w+(?:…|\.\.\.|\s+for\s+\d)",
     re.IGNORECASE,
 )
+# Claude Code's interruptible-turn footer is "… · esc to interrupt", but at
+# narrow PTY widths it TRUNCATES to "… · esc to…" (verified live on workers
+# my-rcg / budgetbug, Claude Code v2.1.158). Idle footers instead show
+# "· ← for agents" / "· ? for shortcuts" — never "esc to" — so the (possibly
+# truncated) hint is an active-turn-only signal. Matching only the full literal
+# "esc to interrupt" misses the truncated form, so an active worker whose
+# animated spinner glyph isn't on-screen at poll time (between animation frames
+# or while a tool result renders) was misclassified RESTING.
+# NOTE: must NOT match choice-menu footers, which carry "Esc to cancel" — so we
+# match only the interrupt/stop hint and the observed truncation "esc to…"
+# (ellipsis right after "to"), never a bare "esc to <word>".
+_RE_INTERRUPT_HINT = re.compile(
+    r"esc to int"  # "esc to interrupt" + mid-word truncations ("esc to int…")
+    r"|esc to stop"
+    r"|esc to ?…",  # truncated right after "to": "esc to…" / "esc to …"
+    re.IGNORECASE,
+)
 _RE_ACCEPT_EDITS = re.compile(r">>\s*accept edits on", re.IGNORECASE)
 
 # Claude Code's auto-mode (2.x+) lets users background long-running work so the
@@ -233,14 +250,14 @@ class ClaudeProvider(LLMProvider):
         tail_wide = self._get_tail(content, TAIL_WIDE)
         tail_narrow = self._get_tail(content, TAIL_NARROW)
 
-        # When "esc to interrupt" is in the wide tail but NOT the narrow tail,
+        # When the interrupt hint is in the wide tail but NOT the narrow tail,
         # it may be stale (from before an interruption).
-        if "esc to interrupt" in tail_wide and "esc to interrupt" not in tail_narrow:
+        if _RE_INTERRUPT_HINT.search(tail_wide) and not _RE_INTERRUPT_HINT.search(tail_narrow):
             stale = self._classify_stale_buzzing(content)
             if stale is not None:
                 return stale
 
-        if "esc to interrupt" in tail_wide:
+        if _RE_INTERRUPT_HINT.search(tail_wide):
             return WorkerState.BUZZING
 
         # Background work (monitor, shell, or in-flight dynamic workflow)
@@ -499,6 +516,14 @@ class ClaudeProvider(LLMProvider):
             if self._has_actionable_prompt(text, include_empty=True):
                 return WorkerState.WAITING
             if _RE_SUBAGENT_ACTIVE.search(tail_wide):
+                return WorkerState.BUZZING
+            # Active-turn footer hint (possibly truncated to "esc to…") — the
+            # turn is still running even when the animated spinner glyph isn't
+            # on-screen this poll. ``_check_styled_buzzing`` only catches the
+            # full dim-styled literal, so the truncated form lands here. Still
+            # require dim styling: a non-dim "esc to interrupt" is pasted text,
+            # not the live footer.
+            if _RE_INTERRUPT_HINT.search(tail_wide) and styled.find_styled_text("esc to", dim=True):
                 return WorkerState.BUZZING
             return WorkerState.RESTING
 

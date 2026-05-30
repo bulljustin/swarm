@@ -431,6 +431,67 @@ class TestClassifyOutputDynamicWorkflow:
 
 
 # ---------------------------------------------------------------------------
+# BUZZING — active turn whose footer "esc to interrupt" is TRUNCATED to
+# "esc to…" at narrow PTY widths. Verified live on workers my-rcg / budgetbug
+# (Claude Code v2.1.158): an active turn whose animated spinner glyph isn't
+# on-screen this poll, with the prompt box + truncated footer visible, was
+# misclassified RESTING and flickered BUZZING↔RESTING frame-to-frame.
+# Idle footers show "· ← for agents" / "· ? for shortcuts" (never "esc to").
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyOutputTruncatedInterruptHint:
+    _SEP = "─" * 50
+
+    def test_truncated_esc_to_footer_with_prompt_is_buzzing(self):
+        """The real failing frame: active turn, no spinner this poll, prompt box
+        visible, footer truncated to 'esc to…'. Must be BUZZING, not RESTING."""
+        content = "\n".join(
+            [
+                "  ⎿  Updated CHANGELOG.md",
+                "     +12 -3",
+                "",
+                self._SEP,
+                "❯",
+                self._SEP,
+                "  ⏵⏵ auto mode on (shift+tab to cycle) · esc to…",
+            ]
+        )
+        assert _provider.classify_output("claude", content) == WorkerState.BUZZING
+
+    def test_esc_to_stop_footer_is_buzzing(self):
+        content = "\n".join(["working", "❯", self._SEP, "  · esc to stop"])
+        assert _provider.classify_output("claude", content) == WorkerState.BUZZING
+
+    def test_idle_auto_mode_agents_footer_is_resting(self):
+        """Idle auto-mode footer ('← for agents', no 'esc to') must stay RESTING."""
+        content = "\n".join(
+            [
+                "  ⎿  Done",
+                "",
+                self._SEP,
+                "❯",
+                self._SEP,
+                "  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+            ]
+        )
+        assert _provider.classify_output("claude", content) == WorkerState.RESTING
+
+    def test_idle_shortcuts_footer_is_resting(self):
+        content = "output line\n\n❯ \n? for shortcuts\n"
+        assert _provider.classify_output("claude", content) == WorkerState.RESTING
+
+    def test_interrupt_hint_recognizes_full_and_truncated(self):
+        from swarm.providers.claude import _RE_INTERRUPT_HINT
+
+        assert _RE_INTERRUPT_HINT.search("· esc to interrupt")
+        assert _RE_INTERRUPT_HINT.search("· esc to…")
+        assert _RE_INTERRUPT_HINT.search("· esc to stop")
+        assert not _RE_INTERRUPT_HINT.search("· ← for agents")
+        assert not _RE_INTERRUPT_HINT.search("? for shortcuts")
+
+
+# ---------------------------------------------------------------------------
 # STUNG — foreground process is a shell (Claude has exited)
 # ---------------------------------------------------------------------------
 

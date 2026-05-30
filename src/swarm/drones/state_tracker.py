@@ -460,6 +460,7 @@ class WorkerStateTracker:
         from swarm.providers.base import TAIL_NARROW
         from swarm.providers.claude import (
             _RE_BACKGROUND_RUNNING,
+            _RE_INTERRUPT_HINT,
             _RE_SUBAGENT_ACTIVE,
             _RE_WORKFLOW_ACTIVE,
         )
@@ -467,7 +468,9 @@ class WorkerStateTracker:
         if not content:
             return False
         tail = "\n".join(content.strip().splitlines()[-TAIL_NARROW:])
-        if "esc to interrupt" in tail:
+        # Interruptible-turn footer — possibly truncated to "esc to…" at narrow
+        # PTY widths, so match the hint rather than the full literal.
+        if _RE_INTERRUPT_HINT.search(tail):
             return True
         if _RE_BACKGROUND_RUNNING.search(tail):
             return True

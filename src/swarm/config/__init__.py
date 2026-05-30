@@ -18,7 +18,6 @@ from swarm.config.loader import (
 )
 from swarm.config.models import (
     DEFAULT_ACTION_BUTTONS,
-    DEFAULT_QUEEN_ACTION_BUTTONS,
     DEFAULT_TASK_BUTTONS,
     ActionButtonConfig,
     ConfigError,
@@ -33,7 +32,6 @@ from swarm.config.models import (
     OversightConfig,
     PlaybookConfig,
     ProviderTuning,
-    QueenActionButtonConfig,
     QueenConfig,
     ResourceConfig,
     SandboxConfig,
@@ -55,7 +53,6 @@ from swarm.config.serialization import (
 
 __all__ = [
     "DEFAULT_ACTION_BUTTONS",
-    "DEFAULT_QUEEN_ACTION_BUTTONS",
     "DEFAULT_TASK_BUTTONS",
     "_TUNING_FIELDS",
     "ActionButtonConfig",
@@ -71,7 +68,6 @@ __all__ = [
     "OversightConfig",
     "PlaybookConfig",
     "ProviderTuning",
-    "QueenActionButtonConfig",
     "QueenConfig",
     "ResourceConfig",
     "SandboxConfig",

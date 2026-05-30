@@ -403,48 +403,6 @@ DEFAULT_ACTION_BUTTONS: list[ActionButtonConfig] = [
 
 
 @dataclass
-class QueenActionButtonConfig:
-    """A configurable quick-action button for the embedded Queen panel.
-
-    Mirrors :class:`ActionButtonConfig` but targets the Queen's ``ccQueen*``
-    handlers instead of the worker ``doAction`` path — the embedded Queen is
-    intentionally not the active terminal worker, so it uses explicit-name
-    ``/api/workers/queen/*`` calls.
-
-    ``action`` selects the client handler:
-      * ``send``       → ``ccQueenSend`` (sends ``value`` as a line, e.g. ``1``,
-                          ``/get-latest``)
-      * ``verb``       → ``ccQueenVerb`` (runs ``value`` as a verb: ``continue``,
-                          ``kill``, ``revive``)
-      * ``refresh``    → ``ccQueenRefresh`` (reconnect the embed)
-      * ``fullscreen`` → ``ccQueenFullscreen``
-    """
-
-    label: str
-    action: str = "send"  # send | verb | refresh | fullscreen
-    value: str = ""  # send: message text; verb: continue|kill|revive
-    style: str = "secondary"  # CSS class suffix: secondary, queen, danger
-    show_mobile: bool = True
-    show_desktop: bool = True
-
-
-DEFAULT_QUEEN_ACTION_BUTTONS: list[QueenActionButtonConfig] = [
-    QueenActionButtonConfig(label="Refresh", action="refresh", style="secondary"),
-    QueenActionButtonConfig(label="Continue", action="verb", value="continue", style="secondary"),
-    QueenActionButtonConfig(label="1", action="send", value="1", style="secondary"),
-    QueenActionButtonConfig(label="2", action="send", value="2", style="secondary"),
-    QueenActionButtonConfig(
-        label="Get Latest", action="send", value="/get-latest", style="secondary"
-    ),
-    QueenActionButtonConfig(
-        label="Clear Session", action="send", value="/clear", style="secondary"
-    ),
-    QueenActionButtonConfig(label="Kill", action="verb", value="kill", style="danger"),
-    QueenActionButtonConfig(label="Revive", action="verb", value="revive", style="secondary"),
-]
-
-
-@dataclass
 class TaskButtonConfig:
     """A configurable task-list button (``task_buttons:`` section in swarm.yaml).
 
@@ -621,12 +579,6 @@ class HiveConfig:
     workflows: dict[str, str] = field(default_factory=dict)
     tool_buttons: list[ToolButtonConfig] = field(default_factory=list)
     action_buttons: list[ActionButtonConfig] = field(default_factory=list)
-    # Defaults to the populated set (not empty) so the embedded Queen always
-    # has its quick-action bar even on a DB that predates this field (the
-    # blob-absent load path keeps the dataclass default).
-    queen_action_buttons: list[QueenActionButtonConfig] = field(
-        default_factory=lambda: list(DEFAULT_QUEEN_ACTION_BUTTONS)
-    )
     task_buttons: list[TaskButtonConfig] = field(default_factory=list)
     custom_llms: list[CustomLLMConfig] = field(default_factory=list)
     provider_overrides: dict[str, ProviderTuning] = field(default_factory=dict)

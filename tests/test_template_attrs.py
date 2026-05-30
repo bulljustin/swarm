@@ -85,3 +85,33 @@ def test_question_mark_shortcut_skips_contenteditable():
         "the ? shortcut handler must guard on isContentEditable so the "
         "task editor (contenteditable description) accepts a literal '?'"
     )
+
+
+def test_queen_action_bar_reuses_worker_action_buttons():
+    """The embedded Queen's quick-action bar must render from the SAME worker
+    `action_buttons` config (advanced config tab), not a separate one, so the
+    Queen matches the workers. Regression for the queen_action_buttons →
+    action_buttons consolidation.
+    """
+    template = (TEMPLATES_DIR / "dashboard.html").read_text()
+    i = template.find('class="cc-queen-actions"')
+    assert i >= 0, "expected the cc-queen-actions block in dashboard.html"
+    block = template[i : i + 1400]
+    # Loops the shared worker config, not a separate queen config.
+    assert "{% for btn in action_buttons %}" in block
+    assert "queen_action_buttons" not in template, (
+        "queen_action_buttons config was removed; the Queen reuses action_buttons"
+    )
+    # The circular "Ask Queen" action is skipped on the Queen herself.
+    assert "btn.action != 'queen'" in block
+    # Worker actions are routed to the Queen via the ccQueen* handlers.
+    for marker in ("ccQueenVerb", "ccQueenRefresh", "ccQueenExport", "ccQueenSend"):
+        assert marker in block, f"Queen action bar must map to {marker}"
+
+
+def test_queen_export_handler_defined_and_registered():
+    """ccQueenExport must exist and be wired into the CC click-delegation map,
+    since the worker Export action maps to it for the Queen."""
+    js = (STATIC_DIR / "dashboard.js").read_text()
+    assert "function ccQueenExport(" in js, "ccQueenExport handler must be defined"
+    assert "ccQueenExport: ccQueenExport" in js, "ccQueenExport must be in CC_HANDLERS"

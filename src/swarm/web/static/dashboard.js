@@ -11014,6 +11014,31 @@
         try { if (window.mountQueenEmbed) window.mountQueenEmbed(); } catch (_) {}
     }
 
+    // Export the Queen's transcript. The worker action bar's Export uses
+    // exportTerminal() which keys off activeTermWorker; the embedded Queen is
+    // never activeTermWorker, so reach her term entry by its explicit cache
+    // key ('queen', set by mountQueenEmbed) and reuse the same serialize path.
+    function ccQueenExport() {
+        var entry = termCache.get('queen');
+        if (!entry || !entry.serializeAddon) { showToast('Export not available', true); return; }
+        try {
+            var content = entry.serializeAddon.serialize();
+            var blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            var ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            a.download = 'queen-' + ts + '.txt';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
+            showToast('Exported: ' + a.download);
+        } catch (e) {
+            showToast('Export failed: ' + e.message, true);
+        }
+    }
+
     // P5: Mobile focus toggle — under 600px the Command Center grid shows
     // ONE panel at a time (Queen or Attention). The button below the
     // command-center flips a body class that the CSS keys off of. We
@@ -11064,6 +11089,7 @@
         ccQueenSend: ccQueenSend,
         ccQueenVerb: ccQueenVerb,
         ccQueenRefresh: ccQueenRefresh,
+        ccQueenExport: ccQueenExport,
     };
 
     document.addEventListener('click', function (e) {

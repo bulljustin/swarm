@@ -208,6 +208,32 @@ class TestClaudeStyledClassification:
         # Should detect the styled hint and classify as RESTING
         assert state == WorkerState.RESTING
 
+    def test_dim_truncated_esc_to_footer_is_buzzing(self) -> None:
+        """Active turn whose footer truncated to 'esc to…' (dim) with the prompt
+        box visible and no spinner this poll → BUZZING, not RESTING. Regression
+        for my-rcg/budgetbug shown RESTING while active (narrow-PTY truncation)."""
+        lines = [
+            _make_row("  ⎿  Updated CHANGELOG.md"),
+            _make_row("❯ "),
+            _make_row("  ⏵⏵ auto mode on (shift+tab to cycle) · esc to…", _DIM),
+        ]
+        text = "\n".join(r[0] for r in lines)
+        sc = StyledContent(text=text, rows=lines)
+        assert self.provider.classify_styled_output("claude", sc) == WorkerState.BUZZING
+
+    def test_dim_cancel_footer_is_not_buzzing(self) -> None:
+        """A dim choice-menu footer ('Esc to cancel') must NOT read as the
+        interrupt hint — the regex excludes 'cancel'."""
+        lines = [
+            _make_row("Which option?"),
+            _make_styled_row("❯ 1. Yes", {(0, 1): _BLUE}),
+            _make_row("  2. No"),
+            _make_row("Enter to select · ↑/↓ to navigate · Esc to cancel", _DIM),
+        ]
+        text = "\n".join(r[0] for r in lines)
+        sc = StyledContent(text=text, rows=lines)
+        assert self.provider.classify_styled_output("claude", sc) == WorkerState.WAITING
+
     def test_styled_choice_menu(self) -> None:
         """Choice menu with styled cursor → WAITING."""
         lines = [

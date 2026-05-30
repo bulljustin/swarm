@@ -150,17 +150,24 @@
                         <div class="cc-panel-body cc-ask-queen-body">
                             <div id="cc-queen-term-holder" class="cc-queen-term-holder"></div>
                             <div class="cc-queen-actions">
-                                {# Config-driven Queen quick-actions — same button styling as the
-                                   worker action bar (config: queen_action_buttons). action maps to
-                                   the ccQueen* handlers; refresh=ccQueenRefresh, fullscreen=
-                                   ccQueenFullscreen, verb=ccQueenVerb(data-qverb), send=ccQueenSend(data-qmsg). #}
-                                {% for btn in queen_action_buttons %}
+                                {# The Queen reuses the SAME worker action_buttons config (advanced
+                                   config tab) so she matches the workers. Worker actions key off the
+                                   selected/active terminal worker, but the embedded Queen is neither —
+                                   so each action maps to the explicit-name ccQueen* handlers instead:
+                                   revive/kill→ccQueenVerb, refresh→ccQueenRefresh, export→ccQueenExport,
+                                   custom command→ccQueenSend, blank→continue. "Ask Queen" (action=queen)
+                                   is skipped — asking the Queen herself is circular. #}
+                                {% for btn in action_buttons %}
+                                {% if btn.action != 'queen' %}
                                 <button type="button"
                                         class="btn btn-{{ btn.style }}{% if not btn.show_mobile %} hide-mobile{% endif %}{% if not btn.show_desktop %} hide-desktop{% endif %}"
-                                        {% if btn.action == 'send' %}data-action="ccQueenSend" data-qmsg="{{ btn.value }}"
-                                        {% elif btn.action == 'verb' %}data-action="ccQueenVerb" data-qverb="{{ btn.value }}"
-                                        {% elif btn.action == 'fullscreen' %}data-action="ccQueenFullscreen"
-                                        {% else %}data-action="ccQueenRefresh" title="Reconnect the Queen terminal"{% endif %}>{{ btn.label }}</button>
+                                        {% if btn.action == 'revive' %}data-action="ccQueenVerb" data-qverb="revive"
+                                        {% elif btn.action == 'kill' %}data-action="ccQueenVerb" data-qverb="kill"
+                                        {% elif btn.action == 'refresh' %}data-action="ccQueenRefresh" title="Reconnect the Queen terminal"
+                                        {% elif btn.action == 'export' %}data-action="ccQueenExport"
+                                        {% elif btn.command %}data-action="ccQueenSend" data-qmsg="{{ btn.command }}"
+                                        {% else %}data-action="ccQueenVerb" data-qverb="continue"{% endif %}>{{ btn.label }}</button>
+                                {% endif %}
                                 {% endfor %}
                             </div>
                         </div>

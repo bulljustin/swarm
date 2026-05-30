@@ -138,21 +138,6 @@ def _apply_buttons(cfg: HiveConfig, body: dict[str, Any]) -> None:
             for b in body["action_buttons"]
             if isinstance(b, dict) and b.get("label")
         ]
-    if "queen_action_buttons" in body and isinstance(body["queen_action_buttons"], list):
-        from swarm.config import QueenActionButtonConfig
-
-        cfg.queen_action_buttons = [
-            QueenActionButtonConfig(
-                label=b["label"],
-                action=b.get("action", "send"),
-                value=b.get("value", ""),
-                style=b.get("style", "secondary"),
-                show_mobile=b.get("show_mobile", True),
-                show_desktop=b.get("show_desktop", True),
-            )
-            for b in body["queen_action_buttons"]
-            if isinstance(b, dict) and b.get("label")
-        ]
     if "task_buttons" in body and isinstance(body["task_buttons"], list):
         from swarm.config import TaskButtonConfig
 
@@ -210,7 +195,7 @@ def apply_scalars(
             val = body[key].strip() or default
             setattr(cfg, attr, val)
             consumed.append(key)
-    for key in ("tool_buttons", "action_buttons", "queen_action_buttons", "task_buttons"):
+    for key in ("tool_buttons", "action_buttons", "task_buttons"):
         if key in body:
             consumed.append(key)
     _apply_buttons(cfg, body)
