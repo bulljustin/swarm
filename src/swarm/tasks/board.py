@@ -537,12 +537,21 @@ class TaskBoard(EventEmitter):
                     self._repair(task, "assigned", "operator-action task may not be ACTIVE")
                 )
 
-    def _recon_inv1(self, now: float, repairs: list[dict[str, str]]) -> None:
-        """>1 ACTIVE per worker → keep newest, demote the rest."""
+    def _group_active_by_worker(self) -> dict[str, list[SwarmTask]]:
+        """Group ACTIVE tasks that have an assigned worker, keyed by worker.
+
+        Caller must hold ``self._lock``. Shared by the INV-1 reconcile and
+        ``reconcile_active_per_worker`` (both enforce one-ACTIVE-per-worker).
+        """
         by_worker: dict[str, list[SwarmTask]] = {}
         for task in self._tasks.values():
             if task.status == TaskStatus.ACTIVE and task.assigned_worker:
                 by_worker.setdefault(task.assigned_worker, []).append(task)
+        return by_worker
+
+    def _recon_inv1(self, now: float, repairs: list[dict[str, str]]) -> None:
+        """>1 ACTIVE per worker → keep newest, demote the rest."""
+        by_worker = self._group_active_by_worker()
         for wname, tasks in by_worker.items():
             if len(tasks) <= 1:
                 continue
@@ -591,11 +600,7 @@ class TaskBoard(EventEmitter):
 
         result: dict[str, list[str]] = {}
         with self._lock:
-            by_worker: dict[str, list[SwarmTask]] = {}
-            for task in self._tasks.values():
-                if task.status != TaskStatus.ACTIVE or not task.assigned_worker:
-                    continue
-                by_worker.setdefault(task.assigned_worker, []).append(task)
+            by_worker = self._group_active_by_worker()
             now = time.time()
             for worker_name, tasks in by_worker.items():
                 if len(tasks) <= 1:

@@ -60,6 +60,55 @@ class TestFileTaskStore:
         assert t.depends_on == ["dep1", "dep2"]
         assert t.tags == ["bug", "critical"]
 
+    def test_every_field_survives_roundtrip(self, store):
+        """Guard against silent field loss: every non-private SwarmTask field
+        set to a non-default must survive save -> load. This is the test whose
+        absence let verification_status/reason/reopen_count + block_reason
+        silently drop from _task_to_dict/_dict_to_task — introspecting the
+        dataclass means any future field is covered automatically.
+        """
+        import dataclasses
+
+        from swarm.tasks.task import TaskType, VerificationStatus
+
+        task = SwarmTask(
+            id="rt1",
+            title="round trip",
+            description="desc",
+            status=TaskStatus.ACTIVE,
+            priority=TaskPriority.HIGH,
+            task_type=TaskType.BUG,
+            assigned_worker="api",
+            depends_on=["x"],
+            tags=["t"],
+            attachments=["/a"],
+            resolution="done-ish",
+            source_email_id="eml",
+            jira_key="PROJ-1",
+            number=42,
+            is_cross_project=True,
+            source_worker="hub",
+            target_worker="api",
+            dependency_type="blocks",
+            acceptance_criteria=["ac"],
+            context_refs=["ref"],
+            cost_budget=5.0,
+            cost_spent=2.0,
+            learnings="learned",
+            block_reason="held by operator",
+            verification_status=VerificationStatus.REOPENED,
+            verification_reason="tests failed",
+            verification_reopen_count=3,
+        )
+        store.save({task.id: task})
+        loaded = store.load()[task.id]
+        lost = [
+            f.name
+            for f in dataclasses.fields(SwarmTask)
+            if not f.name.startswith("_") and getattr(loaded, f.name) != getattr(task, f.name)
+        ]
+        assert not lost, f"FileTaskStore dropped fields on round-trip: {lost}"
+
     def test_source_email_id_persists(self, store):
         """source_email_id should survive save/load cycle."""
         task = SwarmTask(

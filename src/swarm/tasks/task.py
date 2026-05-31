@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, TypedDict
+from typing import Any
 
 _log = logging.getLogger("swarm.tasks.task")
 
@@ -256,33 +256,6 @@ class SwarmTask:
     @property
     def age(self) -> float:
         return time.time() - self.created_at
-
-
-class TaskDict(TypedDict):
-    """Typed shape of task serialization for API/WebSocket responses."""
-
-    id: str
-    title: str
-    description: str
-    status: str
-    priority: str
-    task_type: str
-    assigned_worker: str | None
-    tags: list[str]
-    attachments: list[str]
-    depends_on: list[str]
-    resolution: str
-    source_email_id: str
-    number: int
-    is_cross_project: bool
-    source_worker: str
-    target_worker: str
-    dependency_type: str
-    acceptance_criteria: list[str]
-    context_refs: list[str]
-    cost_budget: float
-    cost_spent: float
-    learnings: str
 
 
 # Canonical display constants — single source of truth for all UIs.

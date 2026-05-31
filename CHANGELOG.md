@@ -10,6 +10,30 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.31.10] - 2026-05-31
+
+### Features
+
+### Changes
+
+- Removed the unused `TaskDict` TypedDict from `tasks/task.py` (nothing imported
+  or returned it). Deduplicated the ACTIVE-tasks-by-worker grouping shared by
+  `_recon_inv1` and `reconcile_active_per_worker` into `_group_active_by_worker`.
+
+### Fixes
+
+- **Legacy `FileTaskStore` round-trip fidelity.** `tasks/store.py` dropped
+  `block_reason` and the verifier fields (`verification_status`/`reason`/
+  `reopen_count`) on save/load — so the `swarm test` task store (and any
+  `FileTaskStore` fallback use) silently lost that state. Wired all four through
+  `_task_to_dict`/`_dict_to_task` so it faithfully matches the production
+  `SqliteTaskStore`. (Production was already lossless — verified empirically.)
+- The file `ProposalStore` (`tasks/proposal.py`) now persists `rejection_reason`
+  through `_serialize`/`_deserialize`.
+- Added `tests/test_store.py::test_every_field_survives_roundtrip` — a generic
+  guard that introspects the SwarmTask dataclass and fails if any field is
+  dropped on a FileTaskStore round-trip, preventing future drift.
+
 ## [2026.5.31.9] - 2026-05-31
 
 ### Features

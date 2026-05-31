@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from swarm.logging import get_logger
-from swarm.tasks.task import SwarmTask, TaskPriority, TaskStatus, TaskType
+from swarm.tasks.task import (
+    SwarmTask,
+    TaskPriority,
+    TaskStatus,
+    TaskType,
+    VerificationStatus,
+)
 
 _log = get_logger("tasks.store")
 
@@ -110,6 +116,10 @@ def _task_to_dict(task: SwarmTask) -> dict[str, Any]:
         "cost_budget": task.cost_budget,
         "cost_spent": task.cost_spent,
         "learnings": task.learnings,
+        "block_reason": task.block_reason,
+        "verification_status": task.verification_status.value,
+        "verification_reason": task.verification_reason,
+        "verification_reopen_count": task.verification_reopen_count,
     }
 
 
@@ -141,4 +151,8 @@ def _dict_to_task(d: dict[str, Any]) -> SwarmTask:
         cost_budget=d.get("cost_budget", 0.0),
         cost_spent=d.get("cost_spent", 0.0),
         learnings=d.get("learnings", ""),
+        block_reason=d.get("block_reason", ""),
+        verification_status=VerificationStatus(d.get("verification_status", "not_run")),
+        verification_reason=d.get("verification_reason", ""),
+        verification_reopen_count=d.get("verification_reopen_count", 0),
     )

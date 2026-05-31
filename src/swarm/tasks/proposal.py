@@ -356,9 +356,10 @@ class ProposalStore:
             "is_plan": p.is_plan,
             "status": p.status.value,
             "created_at": p.created_at,
+            "rejection_reason": p.rejection_reason,
         }
 
-    def _deserialize_proposal(self, d: dict[str, object]) -> AssignmentProposal:
+    def _deserialize_proposal(self, d: dict[str, Any]) -> AssignmentProposal:
         return AssignmentProposal(
             id=d.get("id", uuid.uuid4().hex[:12]),
             worker_name=d.get("worker_name", ""),
@@ -375,6 +376,7 @@ class ProposalStore:
             is_plan=d.get("is_plan", False),
             status=ProposalStatus(d.get("status", "pending")),
             created_at=d.get("created_at", time.time()),
+            rejection_reason=d.get("rejection_reason", ""),
         )
 
     def save(self) -> None:
