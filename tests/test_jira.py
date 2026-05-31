@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -342,12 +344,12 @@ class TestJiraIssueToTask:
 class TestJiraSyncService:
     def _make_service(self, **kwargs: object) -> JiraSyncService:
         mgr = kwargs.pop("_mgr", None) or _mock_mgr()
-        defaults: dict[str, object] = {
+        defaults: dict[str, Any] = {
             "enabled": True,
             "project": "PROJ",
         }
         defaults.update(kwargs)
-        cfg = JiraConfig(**defaults)  # type: ignore[arg-type]
+        cfg = JiraConfig(**defaults)
         return JiraSyncService(cfg, token_manager=mgr)
 
     def test_enabled(self) -> None:
@@ -503,12 +505,12 @@ class TestJiraSyncStats:
 
 class TestLabelFiltering:
     def _make_service(self, **kwargs: object) -> JiraSyncService:
-        defaults: dict[str, object] = {
+        defaults: dict[str, Any] = {
             "enabled": True,
             "project": "PROJ",
         }
         defaults.update(kwargs)
-        cfg = JiraConfig(**defaults)  # type: ignore[arg-type]
+        cfg = JiraConfig(**defaults)
         return JiraSyncService(cfg, token_manager=_mock_mgr())
 
     @pytest.mark.asyncio
@@ -603,9 +605,9 @@ class TestLabelFiltering:
 
 class TestBuildJql:
     def _make_service(self, **kwargs: object) -> JiraSyncService:
-        defaults: dict[str, object] = {"enabled": True}
+        defaults: dict[str, Any] = {"enabled": True}
         defaults.update(kwargs)
-        cfg = JiraConfig(**defaults)  # type: ignore[arg-type]
+        cfg = JiraConfig(**defaults)
         return JiraSyncService(cfg, token_manager=_mock_mgr())
 
     def test_excludes_done_status_category(self) -> None:
@@ -717,12 +719,12 @@ class TestOAuth:
 
 class TestIssueCreation:
     def _make_service(self, **kwargs: object) -> JiraSyncService:
-        defaults: dict[str, object] = {
+        defaults: dict[str, Any] = {
             "enabled": True,
             "project": "PROJ",
         }
         defaults.update(kwargs)
-        cfg = JiraConfig(**defaults)  # type: ignore[arg-type]
+        cfg = JiraConfig(**defaults)
         return JiraSyncService(cfg, token_manager=_mock_mgr())
 
     @pytest.mark.asyncio
@@ -776,12 +778,12 @@ class TestIssueCreation:
 
 class TestAssignment:
     def _make_service(self, **kwargs: object) -> JiraSyncService:
-        defaults: dict[str, object] = {
+        defaults: dict[str, Any] = {
             "enabled": True,
             "project": "PROJ",
         }
         defaults.update(kwargs)
-        cfg = JiraConfig(**defaults)  # type: ignore[arg-type]
+        cfg = JiraConfig(**defaults)
         mgr = _mock_mgr()
         mgr.account_id = "abc123"
         return JiraSyncService(cfg, token_manager=mgr)
@@ -808,7 +810,8 @@ class TestAssignment:
     async def test_assign_to_me_no_account_id(self) -> None:
         """assign_to_me returns False when token manager has no account_id."""
         svc = self._make_service()
-        svc._token_manager.account_id = ""  # type: ignore[union-attr]
+        assert svc._token_manager is not None
+        svc._token_manager.account_id = ""
         svc.client.assign_issue = AsyncMock(return_value=True)
         task = SwarmTask(title="Test", jira_key="PROJ-1")
         ok = await svc.assign_to_me(task)
@@ -1014,7 +1017,7 @@ class TestEnrichTaskFromFields:
         return JiraSyncService(cfg, token_manager=_mock_mgr(), uploads_dir=uploads_dir)
 
     @pytest.mark.asyncio
-    async def test_attachments_downloaded_and_paths_recorded(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    async def test_attachments_downloaded_and_paths_recorded(self, tmp_path: Path) -> None:
         svc = self._make_service(uploads_dir=tmp_path)
         svc.client.download_attachment = AsyncMock(side_effect=[b"png-bytes-1", b"png-bytes-2"])
 
@@ -1051,7 +1054,7 @@ class TestEnrichTaskFromFields:
         assert "Jira sync" in task.description
 
     @pytest.mark.asyncio
-    async def test_download_failure_skips_attachment(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    async def test_download_failure_skips_attachment(self, tmp_path: Path) -> None:
         import aiohttp
 
         svc = self._make_service(uploads_dir=tmp_path)
@@ -1071,7 +1074,7 @@ class TestEnrichTaskFromFields:
         assert task.attachments[0].endswith("ok.png")
 
     @pytest.mark.asyncio
-    async def test_import_issues_enriches_each_task(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    async def test_import_issues_enriches_each_task(self, tmp_path: Path) -> None:
         svc = self._make_service(uploads_dir=tmp_path)
         svc.client.search_issues = AsyncMock(
             return_value=[
@@ -1105,7 +1108,7 @@ class TestRefreshTask:
         return JiraSyncService(cfg, token_manager=_mock_mgr(), uploads_dir=uploads_dir)
 
     @pytest.mark.asyncio
-    async def test_refresh_pulls_comments_and_attachments(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    async def test_refresh_pulls_comments_and_attachments(self, tmp_path: Path) -> None:
         svc = self._make_service(uploads_dir=tmp_path)
         svc.client.get_issue = AsyncMock(
             return_value={
@@ -1132,13 +1135,13 @@ class TestRefreshTask:
         assert task.attachments and task.attachments[0].endswith("a.png")
 
     @pytest.mark.asyncio
-    async def test_refresh_no_jira_key(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    async def test_refresh_no_jira_key(self, tmp_path: Path) -> None:
         svc = self._make_service(uploads_dir=tmp_path)
         task = SwarmTask(title="t")
         assert await svc.refresh_task(task) is False
 
     @pytest.mark.asyncio
-    async def test_refresh_strips_old_sync_tail(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    async def test_refresh_strips_old_sync_tail(self, tmp_path: Path) -> None:
         svc = self._make_service(uploads_dir=tmp_path)
         svc.client.get_issue = AsyncMock(
             return_value={
