@@ -18,6 +18,17 @@ _SHELLS = frozenset(("bash", "zsh", "sh", "fish", "dash", "ksh", "csh", "tcsh"))
 SAFE_SHELL_CMDS = r"ls|cat|head|tail|find|wc|stat|file|which|pwd|echo|date"
 SAFE_GIT_SUBCMDS = r"status|log|diff|show|branch|remote|tag"
 
+# Shared safe-tool regex for the CLI-style providers (codex, opencode) that
+# expose ``shell()`` / ``file_read()`` / ``file_search()`` tool calls. Kept
+# here so the two providers can't drift (they used identical copies).
+SHELL_STYLE_SAFE_PATTERNS = re.compile(
+    rf"shell\(.*({SAFE_SHELL_CMDS})\b"
+    rf"|shell\(.*git\s+({SAFE_GIT_SUBCMDS})\b"
+    r"|file_read\("
+    r"|file_search\(",
+    re.IGNORECASE,
+)
+
 # Canonical tail-window sizes for _get_tail() — prevents magic-number drift.
 TAIL_LAST_LINE = 1  # Single line: empty prompt check
 TAIL_NARROW = 5  # Narrow: accept-edits, idle prompt, hints

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from swarm.providers.base import SAFE_GIT_SUBCMDS, SAFE_SHELL_CMDS, LLMProvider
+from swarm.providers.base import SHELL_STYLE_SAFE_PATTERNS, TAIL_WIDE, LLMProvider
 from swarm.worker.worker import WorkerState
 
 # Busy: tool-specific status messages shown while working
@@ -36,14 +36,6 @@ _RE_OPENCODE_CHOICE = re.compile(
 # User question: structured question tool dialog
 _RE_OPENCODE_QUESTION = re.compile(
     r"Agent is working, please wait",
-    re.IGNORECASE,
-)
-
-_SAFE_PATTERNS = re.compile(
-    rf"shell\(.*({SAFE_SHELL_CMDS})\b"
-    rf"|shell\(.*git\s+({SAFE_GIT_SUBCMDS})\b"
-    r"|file_read\("
-    r"|file_search\(",
     re.IGNORECASE,
 )
 
@@ -81,7 +73,7 @@ class OpenCodeProvider(LLMProvider):
         if self._is_shell_exited(command):
             return WorkerState.STUNG
 
-        tail = self._get_tail(content, 30)
+        tail = self._get_tail(content, TAIL_WIDE)
 
         if _RE_OPENCODE_BUSY.search(tail):
             return WorkerState.BUZZING
@@ -95,11 +87,11 @@ class OpenCodeProvider(LLMProvider):
         return WorkerState.BUZZING
 
     def has_choice_prompt(self, content: str) -> bool:
-        tail = self._get_tail(content, 30)
+        tail = self._get_tail(content, TAIL_WIDE)
         return bool(_RE_OPENCODE_CHOICE.search(tail))
 
     def is_user_question(self, content: str) -> bool:
-        tail = self._get_tail(content, 30)
+        tail = self._get_tail(content, TAIL_WIDE)
         return bool(_RE_OPENCODE_QUESTION.search(tail))
 
     def approval_response(self, approve: bool = True) -> str:
@@ -109,7 +101,7 @@ class OpenCodeProvider(LLMProvider):
         return ""
 
     def safe_tool_patterns(self) -> re.Pattern[str]:
-        return _SAFE_PATTERNS
+        return SHELL_STYLE_SAFE_PATTERNS
 
     def env_strip_prefixes(self) -> tuple[str, ...]:
         return ("OPENCODE", "ANTHROPIC_API", "OPENAI_API")

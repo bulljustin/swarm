@@ -10,20 +10,12 @@ from __future__ import annotations
 import json
 import re
 
-from swarm.providers.base import SAFE_GIT_SUBCMDS, SAFE_SHELL_CMDS, LLMProvider
+from swarm.providers.base import SHELL_STYLE_SAFE_PATTERNS, TAIL_WIDE, LLMProvider
 from swarm.worker.worker import WorkerState
 
 # Codex uses Ratatui icons — these may not survive ANSI stripping
 _RE_CODEX_IDLE = re.compile(r"[◇□]")
 _RE_CODEX_BUSY = re.compile(r"[▶▷]")
-
-_SAFE_PATTERNS = re.compile(
-    rf"shell\(.*({SAFE_SHELL_CMDS})\b"
-    rf"|shell\(.*git\s+({SAFE_GIT_SUBCMDS})\b"
-    r"|file_read\("
-    r"|file_search\(",
-    re.IGNORECASE,
-)
 
 
 _log = __import__("logging").getLogger("swarm.providers.codex")
@@ -80,7 +72,7 @@ class CodexProvider(LLMProvider):
         if self._is_shell_exited(command):
             return WorkerState.STUNG
 
-        tail = self._get_tail(content, 30)
+        tail = self._get_tail(content, TAIL_WIDE)
 
         # Ratatui icons (may not survive ANSI stripping)
         if _RE_CODEX_BUSY.search(tail):
@@ -102,7 +94,7 @@ class CodexProvider(LLMProvider):
         return ""
 
     def safe_tool_patterns(self) -> re.Pattern[str]:
-        return _SAFE_PATTERNS
+        return SHELL_STYLE_SAFE_PATTERNS
 
     def env_strip_prefixes(self) -> tuple[str, ...]:
         return ("OPENAI",)

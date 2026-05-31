@@ -234,3 +234,26 @@ class TestLongRunningToolActive:
 
     def test_claude_false_for_plain_idle(self) -> None:
         assert get_provider("claude").is_long_running_tool_active("Done.\n> \n") is False
+
+
+class TestTunedDelegation:
+    """A TunedProvider must delegate ALL behavior to its inner provider. Both
+    is_long_running_tool_active and supports_native_goal default to False in the
+    base, so a missing delegation silently disables Claude's dynamic-workflow
+    detection (→ false nudges mid-workflow) and /goal seeding when tuning is on.
+    """
+
+    @staticmethod
+    def _tuned_claude() -> TunedProvider:
+        return TunedProvider(get_provider("claude"), ProviderTuning())
+
+    def test_is_long_running_tool_active_delegates_to_claude(self) -> None:
+        content = "1 background dynamic workflow"
+        # Sanity: bare Claude detects it.
+        assert get_provider("claude").is_long_running_tool_active(content) is True
+        # The tuned wrapper must too (regressed before the delegation was added).
+        assert self._tuned_claude().is_long_running_tool_active(content) is True
+
+    def test_supports_native_goal_delegates_to_claude(self) -> None:
+        assert get_provider("claude").supports_native_goal is True
+        assert self._tuned_claude().supports_native_goal is True

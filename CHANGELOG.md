@@ -10,6 +10,28 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.31.13] - 2026-05-31
+
+### Features
+
+### Changes
+
+- Providers DRY: `gemini`/`codex`/`opencode` now use the `TAIL_WIDE` constant
+  instead of a hardcoded `30`, and the identical codex/opencode safe-tool regex
+  is shared from `base.SHELL_STYLE_SAFE_PATTERNS` (was copy-pasted in both).
+- Rate-limit detection (`claude._RE_RATE_LIMIT`) is now case-insensitive
+  (`re.IGNORECASE`) so a non-title-case banner still trips it.
+
+### Fixes
+
+- **A tuned Claude no longer silently loses dynamic-workflow detection and
+  `/goal` support.** `TunedProvider` delegated 24 methods to its inner provider
+  but missed `is_long_running_tool_active` and `supports_native_goal` — both
+  default to `False` in the base, so `TunedProvider(ClaudeProvider, …)` shadowed
+  Claude's overrides: the worker looked idle mid-workflow (false nudges) and
+  `/goal` seeding was skipped. Added both delegations + contract tests proving a
+  tuned Claude keeps both.
+
 ## [2026.5.31.12] - 2026-05-31
 
 ### Features

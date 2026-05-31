@@ -127,6 +127,12 @@ class TunedProvider(LLMProvider):
     def has_empty_prompt(self, content: str) -> bool:
         return self._inner.has_empty_prompt(content)
 
+    def is_long_running_tool_active(self, content: str) -> bool:
+        # Must delegate: the base default is False, so without this a tuned
+        # Claude loses dynamic-workflow detection and gets false nudges
+        # mid-workflow.
+        return self._inner.is_long_running_tool_active(content)
+
     @property
     def supports_slash_commands(self) -> bool:
         return self._inner.supports_slash_commands
@@ -134,6 +140,12 @@ class TunedProvider(LLMProvider):
     @property
     def supports_hooks(self) -> bool:
         return self._inner.supports_hooks
+
+    @property
+    def supports_native_goal(self) -> bool:
+        # Delegate: base default is False, so a tuned Claude would otherwise
+        # silently lose /goal seeding.
+        return self._inner.supports_native_goal
 
     @property
     def supports_resume(self) -> bool:

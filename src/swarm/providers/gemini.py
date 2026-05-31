@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from swarm.providers.base import SAFE_GIT_SUBCMDS, SAFE_SHELL_CMDS, LLMProvider
+from swarm.providers.base import SAFE_GIT_SUBCMDS, SAFE_SHELL_CMDS, TAIL_WIDE, LLMProvider
 from swarm.worker.worker import WorkerState
 
 _RE_GEMINI_PROMPT = re.compile(r"^gemini>\s*$", re.MULTILINE)
@@ -69,7 +69,7 @@ class GeminiProvider(LLMProvider):
         if self._is_shell_exited(command):
             return WorkerState.STUNG
 
-        tail = self._get_tail(content, 30)
+        tail = self._get_tail(content, TAIL_WIDE)
 
         # Busy: spinner or "esc to cancel" text
         if "esc to cancel" in tail or "⠏" in tail or "💬" in tail:

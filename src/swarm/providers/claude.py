@@ -175,6 +175,7 @@ _RATE_LIMIT_PREFIXES = (
 )
 _RE_RATE_LIMIT = re.compile(
     r"(?:" + "|".join(re.escape(p) for p in _RATE_LIMIT_PREFIXES) + r")",
+    re.IGNORECASE,
 )
 
 
