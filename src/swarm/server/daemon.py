@@ -753,6 +753,10 @@ class SwarmDaemon(EventEmitter):
         """Discover workers and start the pilot loop."""
         # Prune old log entries from the SQLite store on startup
         self.drone_log.prune_store()
+        # Prune old inter-worker messages too — the messages table has no other
+        # retention path, so without this it grows unbounded across the daemon's
+        # lifetime (the buzz log above is pruned the same way).
+        self.message_store.prune()
 
         self._reconcile_active_per_worker()
 

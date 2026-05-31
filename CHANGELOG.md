@@ -10,6 +10,27 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.31.12] - 2026-05-31
+
+### Features
+
+### Changes
+
+- Aligned `MessageStore._SCHEMA` (the standalone/test `messages.db` path)
+  with the canonical `messages` table in `db/schema.py` — same indexes
+  (recipient, unread, dedup, created_at) so the two definitions can't drift
+  and the standalone path isn't silently missing the dedup index that
+  `send()`/`broadcast()` rely on.
+
+### Fixes
+
+- **The `messages` table no longer grows unbounded.** `MessageStore.prune()`
+  (7-day retention) existed but was never called — unlike the buzz log, which
+  is pruned on startup. Wired `message_store.prune()` into `daemon.start()`
+  alongside `drone_log.prune_store()`. Added prune regression tests.
+- `MessageStore.prune()` now logs at WARNING with `exc_info` on a SQLite error
+  (it was the one method here that swallowed errors silently).
+
 ## [2026.5.31.11] - 2026-05-31
 
 ### Features

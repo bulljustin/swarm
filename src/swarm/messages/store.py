@@ -31,9 +31,16 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at  REAL    NOT NULL,
     read_at     REAL
 );
-CREATE INDEX IF NOT EXISTS idx_msg_recipient ON messages(recipient);
-CREATE INDEX IF NOT EXISTS idx_msg_read ON messages(read_at);
-CREATE INDEX IF NOT EXISTS idx_msg_created ON messages(created_at);
+-- Keep these indexes in sync with the canonical `messages` table in
+-- db/schema.py. This standalone DDL only runs for the non-shared
+-- (test/legacy messages.db) path; production shares the SwarmDB connection
+-- where db/schema.py owns the table. They must not drift — the dedup index
+-- in particular is what send()/broadcast()'s dedup probe relies on.
+CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient);
+CREATE INDEX IF NOT EXISTS idx_messages_unread ON messages(recipient, read_at);
+CREATE INDEX IF NOT EXISTS idx_messages_dedup
+  ON messages(sender, recipient, msg_type, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 """
 
 
@@ -312,4 +319,5 @@ class MessageStore:
                 self._conn.commit()
                 return cur.rowcount
             except sqlite3.Error:
+                _log.warning("failed to prune messages", exc_info=True)
                 return 0

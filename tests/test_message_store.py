@@ -240,3 +240,32 @@ class TestGetUnreadInboundOnly:
         # message (because platform is the recipient there).
         unread_p = store.get_unread("platform")
         assert any(m.id == out_id and m.sender == "rcg-networks" for m in unread_p)
+
+
+class TestPrune:
+    """prune() enforces message retention — the only retention path for the
+    messages table (wired into daemon.start() so it actually runs)."""
+
+    def test_deletes_old_keeps_recent(self, store: MessageStore) -> None:
+        import time
+
+        fresh_id = store.send("hub", "api", "finding", "fresh")
+        old_id = store.send("hub", "platform", "finding", "old")
+        assert fresh_id is not None and old_id is not None
+        # Backdate the second message beyond the retention window.
+        with store._lock:
+            store._conn.execute(
+                "UPDATE messages SET created_at = ? WHERE id = ?",
+                (time.time() - 30 * 86400, old_id),
+            )
+            store._conn.commit()
+
+        deleted = store.prune(max_age_days=7)
+        assert deleted == 1
+        remaining = {m.id for m in store.get_recent()}
+        assert fresh_id in remaining
+        assert old_id not in remaining
+
+    def test_no_old_messages_is_noop(self, store: MessageStore) -> None:
+        store.send("hub", "api", "finding", "recent")
+        assert store.prune(max_age_days=7) == 0
