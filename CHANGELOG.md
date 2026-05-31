@@ -10,6 +10,26 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.31.6] - 2026-05-31
+
+### Features
+
+### Changes
+
+- Type safety in `mcp/queen_handlers`: `_clamp`'s `value` is now
+  `int | str | float | None` (was `Any`) and `_fire_async`'s `coro` is
+  `Coroutine[Any, Any, None]` (was `Any`). Removed the unused `ErrorContent`
+  alias from `mcp/types.py`.
+
+### Fixes
+
+- **`swarm_batch` no longer breaks on structured sub-tools.** A batched op
+  whose handler returns a `StructuredResponse` dict (e.g. `swarm_task_status`)
+  hit `op_result[0]` in `handlers/_batch.py` → `KeyError: 0`, surfacing as a
+  useless "Error: 0" for the whole batch (after earlier ops' side effects had
+  already applied). The batch loop now normalizes the dict/list result shape
+  the same way `handle_tool_call` does internally. Regression test added.
+
 ## [2026.5.31.5] - 2026-05-31
 
 ### Features

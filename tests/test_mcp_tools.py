@@ -187,6 +187,25 @@ class TestSwarmBatch:
         assert "[1/2]" in text
         assert "[2/2]" in text
 
+    def test_structured_subtool_does_not_break_batch(self, batch_daemon):
+        """A batched op whose sub-tool returns a StructuredResponse dict
+        (e.g. swarm_task_status) must still yield a result line. Before the
+        fix, ``op_result[0]`` indexed the dict and raised ``KeyError: 0``,
+        which surfaced as a useless 'Error: 0' for the whole batch."""
+        task = SwarmTask(title="Wire the thing")
+        task.number = 7
+        task.assigned_worker = "api"
+        batch_daemon.task_board.all_tasks = [task]
+        result = handle_tool_call(
+            batch_daemon,
+            "api",
+            "swarm_batch",
+            {"ops": [{"tool": "swarm_task_status", "args": {}}]},
+        )
+        text = result[0]["text"]
+        assert "[1/1] swarm_task_status" in text
+        assert "Error: 0" not in text
+
     def test_empty_ops_is_rejected(self, batch_daemon):
         result = handle_tool_call(batch_daemon, "api", "swarm_batch", {"ops": []})
         text = result[0]["text"]

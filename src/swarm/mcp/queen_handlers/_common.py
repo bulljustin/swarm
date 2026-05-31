@@ -7,8 +7,6 @@ by every per-domain handler module under :mod:`swarm.mcp.queen_handlers`.
 
 from __future__ import annotations
 
-from typing import Any
-
 from swarm.mcp.types import TextContent
 from swarm.worker.worker import QUEEN_WORKER_NAME
 
@@ -30,7 +28,7 @@ def _assert_queen(worker_name: str) -> list[TextContent] | None:
     return None
 
 
-def _clamp(value: Any, default: int, minimum: int, maximum: int) -> int:
+def _clamp(value: int | str | float | None, default: int, minimum: int, maximum: int) -> int:
     try:
         n = int(value)
     except (TypeError, ValueError):

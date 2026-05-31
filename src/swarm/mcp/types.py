@@ -26,12 +26,6 @@ class TextContent(TypedDict):
     text: str
 
 
-# Errors are returned as TextContent with a human-readable text body
-# starting with "Error:", "Missing 'foo'", etc. — no schema distinction
-# at the MCP layer. Aliased for documentation clarity.
-ErrorContent = TextContent
-
-
 class StructuredResponse(TypedDict):
     """Wrapped MCP response — bare text blocks plus an optional JSON
     sidecar Claude Code 2.1.x clients query directly without re-parsing

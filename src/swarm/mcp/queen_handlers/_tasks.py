@@ -15,6 +15,7 @@ call site.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any
 
 from swarm.mcp._arg_types import QueenForceCompleteTaskArgs, QueenReassignTaskArgs
@@ -151,7 +152,7 @@ def _resolve_task(d: SwarmDaemon, args: dict[str, Any]) -> SwarmTask | list[Text
     return task
 
 
-def _fire_async(coro: Any) -> None:
+def _fire_async(coro: Coroutine[Any, Any, None]) -> None:
     """Fire an async daemon method from a sync MCP handler context.
 
     Falls back to silently dropping the call if no event loop is

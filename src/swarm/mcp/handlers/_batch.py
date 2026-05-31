@@ -151,7 +151,12 @@ def _handle_batch(d: SwarmDaemon, worker_name: str, args: BatchArgs) -> list[Tex
                 break
             continue
         op_result = handle_tool_call(d, worker_name, tool, op_args)
-        text = op_result[0].get("text", "") if op_result else ""
+        # handle_tool_call returns either a bare content list or a dict
+        # wrapper (StructuredResponse, e.g. swarm_task_status) — normalize the
+        # same way handle_tool_call does internally before indexing, otherwise
+        # a structured sub-tool blows the whole batch up with ``KeyError: 0``.
+        op_content = op_result.get("content") if isinstance(op_result, dict) else op_result
+        text = op_content[0].get("text", "") if op_content else ""
         lines.append(f"[{idx}/{total}] {tool} → {text}")
 
     if aborted:
