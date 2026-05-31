@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from swarm.worker.usage import (
+    cache_read_ratio,
     estimate_cost,
     estimate_cost_for_provider,
     find_active_session,
@@ -202,3 +203,24 @@ class TestWorkerApiDictIncludesCost:
         w = Worker(name="test", path="/tmp/test")
         d = w.to_api_dict()
         assert d["cost_usd"] == 0.0
+
+
+class TestCacheReadRatio:
+    """cache_read_ratio: fraction of cache tokens that were reads (0.0-1.0)."""
+
+    def test_no_cache_activity_returns_zero(self):
+        # Division-by-zero guard: no cache reads or creations.
+        assert cache_read_ratio(TokenUsage(input_tokens=100)) == 0.0
+
+    def test_empty_usage_returns_zero(self):
+        assert cache_read_ratio(TokenUsage()) == 0.0
+
+    def test_all_reads(self):
+        assert cache_read_ratio(TokenUsage(cache_read_tokens=1000)) == 1.0
+
+    def test_all_creations(self):
+        assert cache_read_ratio(TokenUsage(cache_creation_tokens=1000)) == 0.0
+
+    def test_mixed(self):
+        u = TokenUsage(cache_read_tokens=400, cache_creation_tokens=600)
+        assert cache_read_ratio(u) == pytest.approx(0.4)

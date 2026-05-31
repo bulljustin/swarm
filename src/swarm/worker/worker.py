@@ -223,6 +223,24 @@ class Worker:
     _api_dict_cache: WorkerDict | None = field(default=None, repr=False)
     _api_dict_cache_time: float = field(default=0.0, repr=False)
 
+    def _apply_state_transition(
+        self, new_state: WorkerState, *, clear_revive_window: bool = False
+    ) -> None:
+        """Commit a confirmed state change. Shared by update_state (debounced)
+        and force_state (immediate). ``clear_revive_window`` also resets the
+        STUNG/revive-grace fields — force_state's extra step on confirmed death.
+        """
+        # Reset revive count when worker starts working successfully
+        if new_state == WorkerState.BUZZING and self.state != WorkerState.BUZZING:
+            self.revive_count = 0
+        self.state = new_state
+        self.state_since = time.time()
+        self._resting_confirmations = 0
+        self._api_dict_cache = None
+        if clear_revive_window:
+            self._stung_confirmations = 0
+            self._revive_at = 0.0
+
     def update_state(self, new_state: WorkerState) -> bool:
         """Update state, return True if state changed.
 
@@ -275,13 +293,7 @@ class Worker:
                     self.state.value,
                     new_state.value,
                 )
-            # Reset revive count when worker starts working successfully
-            if new_state == WorkerState.BUZZING and self.state != WorkerState.BUZZING:
-                self.revive_count = 0
-            self.state = new_state
-            self.state_since = time.time()
-            self._resting_confirmations = 0
-            self._api_dict_cache = None
+            self._apply_state_transition(new_state)
             return True
         return False
 
@@ -292,14 +304,7 @@ class Worker:
         Clears the revive grace window so STUNG detection isn't suppressed.
         """
         if self.state != new_state:
-            if new_state == WorkerState.BUZZING and self.state != WorkerState.BUZZING:
-                self.revive_count = 0
-            self.state = new_state
-            self.state_since = time.time()
-            self._resting_confirmations = 0
-            self._stung_confirmations = 0
-            self._revive_at = 0.0
-            self._api_dict_cache = None
+            self._apply_state_transition(new_state, clear_revive_window=True)
 
     def record_revive(self) -> None:
         """Record a revive attempt."""

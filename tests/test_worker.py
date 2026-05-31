@@ -6,6 +6,7 @@ import pytest
 
 from swarm.worker.worker import (
     SLEEPING_THRESHOLD,
+    WORKER_KIND_QUEEN,
     TokenUsage,
     Worker,
     WorkerState,
@@ -227,6 +228,29 @@ class TestDisplayState:
             state_since=time.time() - (SLEEPING_THRESHOLD + 10),
         )
         assert w.display_state == WorkerState.STUNG
+
+    def test_queen_never_sleeping(self):
+        # The Queen is always-on by design — RESTING past the threshold must
+        # NOT display as SLEEPING (the is_queen branch in display_state).
+        w = Worker(
+            name="queen",
+            path="/tmp",
+            kind=WORKER_KIND_QUEEN,
+            state=WorkerState.RESTING,
+            state_since=time.time() - (SLEEPING_THRESHOLD + 100),
+        )
+        assert w.is_queen is True
+        assert w.display_state == WorkerState.RESTING
+
+    def test_non_queen_resting_does_sleep(self):
+        # Control: same conditions, non-Queen worker DOES become SLEEPING.
+        w = Worker(
+            name="api",
+            path="/tmp",
+            state=WorkerState.RESTING,
+            state_since=time.time() - (SLEEPING_THRESHOLD + 100),
+        )
+        assert w.display_state == WorkerState.SLEEPING
 
 
 class TestFormatDuration:

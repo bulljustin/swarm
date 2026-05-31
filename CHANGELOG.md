@@ -10,6 +10,23 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.31.9] - 2026-05-31
+
+### Features
+
+### Changes
+
+- Deduplicated `Worker.update_state` / `Worker.force_state`: the shared
+  state-reset block (revive-count reset, state/state_since, confirmation
+  counters, api-dict cache) is now a single `_apply_state_transition` helper.
+  Behaviour-preserving.
+
+### Fixes
+
+- Added test coverage for two previously-untested edge paths: `cache_read_ratio`
+  (including its division-by-zero guard) and the Queen's `display_state`
+  never-SLEEPING exemption (with a non-Queen control).
+
 ## [2026.5.31.8] - 2026-05-31
 
 ### Features
