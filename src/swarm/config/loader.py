@@ -17,6 +17,7 @@ from swarm.config._known_keys import (
     _KNOWN_OVERSIGHT_KEYS,
     _KNOWN_QUEEN_KEYS,
     _KNOWN_RESOURCES_KEYS,
+    _KNOWN_SANDBOX_KEYS,
     _KNOWN_TERMINAL_KEYS,
     _KNOWN_TEST_KEYS,
     _KNOWN_TOP_KEYS,
@@ -44,6 +45,7 @@ from swarm.config.models import (
     ProviderTuning,
     QueenConfig,
     ResourceConfig,
+    SandboxConfig,
     StateThresholds,
     TaskButtonConfig,
     TerminalConfig,
@@ -336,6 +338,13 @@ def _parse_config(path: Path) -> HiveConfig:
         assign_operator_engagement_minutes=drones_data.get(
             "assign_operator_engagement_minutes", 10.0
         ),
+        idle_nudge_max_repeats=drones_data.get("idle_nudge_max_repeats", 3),
+        native_goal_enabled=drones_data.get("native_goal_enabled", True),
+        native_goal_max_turns=drones_data.get("native_goal_max_turns", 25),
+        user_request_plan_mode=drones_data.get("user_request_plan_mode", True),
+        dreamer_interval_seconds=drones_data.get("dreamer_interval_seconds", 14400.0),
+        dreamer_lookback_hours=drones_data.get("dreamer_lookback_hours", 24.0),
+        dreamer_min_pattern_count=drones_data.get("dreamer_min_pattern_count", 3),
     )
 
     # Parse queen section
@@ -395,6 +404,16 @@ def _parse_config(path: Path) -> HiveConfig:
         suspend_on_high=resources_data.get("suspend_on_high", True),
         dstate_scan=resources_data.get("dstate_scan", True),
         dstate_threshold_sec=resources_data.get("dstate_threshold_sec", 120.0),
+    )
+
+    # Parse sandbox section (Claude Code native sandbox opt-in; consumed by
+    # swarm.hooks.install)
+    sandbox_data = data.get("sandbox") or {}
+    _warn_unknown_keys("sandbox", sandbox_data, _KNOWN_SANDBOX_KEYS)
+    sandbox = SandboxConfig(
+        enabled=sandbox_data.get("enabled", False),
+        min_claude_version=sandbox_data.get("min_claude_version", "2.0"),
+        settings_overrides=dict(sandbox_data.get("settings_overrides") or {}),
     )
 
     notifications = _parse_notifications(data.get("notifications") or {})
@@ -519,6 +538,7 @@ def _parse_config(path: Path) -> HiveConfig:
         test=test,
         terminal=terminal,
         resources=resources,
+        sandbox=sandbox,
         workflows=workflows,
         tool_buttons=tool_buttons,
         action_buttons=action_buttons,

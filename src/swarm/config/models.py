@@ -518,9 +518,6 @@ class TerminalConfig:
     """Web terminal settings (pty -> xterm)."""
 
     replay_scrollback: bool = True
-    # Deprecated: render_ansi() output is bounded by screen size; kept for
-    # backwards-compatible config parsing only.
-    replay_max_bytes: int = 0
 
 
 @dataclass

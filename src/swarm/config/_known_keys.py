@@ -40,6 +40,7 @@ _KNOWN_TOP_KEYS = {
     "domain",
     "terminal",
     "resources",
+    "sandbox",
 }
 
 _KNOWN_DRONE_KEYS = {
@@ -70,6 +71,13 @@ _KNOWN_DRONE_KEYS = {
     "idle_nudge_debounce_seconds",
     "assign_affinity_floor",
     "assign_operator_engagement_minutes",
+    "idle_nudge_max_repeats",
+    "native_goal_enabled",
+    "native_goal_max_turns",
+    "user_request_plan_mode",
+    "dreamer_interval_seconds",
+    "dreamer_lookback_hours",
+    "dreamer_min_pattern_count",
 }
 
 _KNOWN_QUEEN_KEYS = {
@@ -150,6 +158,13 @@ _KNOWN_RESOURCES_KEYS = {
     "suspend_on_high",
     "dstate_scan",
     "dstate_threshold_sec",
+}
+
+
+_KNOWN_SANDBOX_KEYS = {
+    "enabled",
+    "min_claude_version",
+    "settings_overrides",
 }
 
 

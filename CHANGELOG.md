@@ -10,6 +10,31 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.5.31.8] - 2026-05-31
+
+### Features
+
+### Changes
+
+- Removed the deprecated `terminal.replay_max_bytes` config field (the loader
+  already ignored it; old configs still parse with a deprecation notice).
+
+### Fixes
+
+- **Config no longer silently dropped on save (round-trip fidelity).** A full
+  serialize → save → load round-trip was losing operator config: **10
+  `DroneConfig` fields** (`context_warning_threshold`, `context_critical_threshold`,
+  `speculation_enabled`, `idle_nudge_max_repeats`, `native_goal_enabled`,
+  `native_goal_max_turns`, `user_request_plan_mode`, `dreamer_interval_seconds`,
+  `dreamer_lookback_hours`, `dreamer_min_pattern_count`), the **entire
+  `resources` section** (never serialized), and the **`sandbox` section** (never
+  loaded or serialized, despite being consumed by `hooks/install.py`). Wired all
+  of them through `serialization.py`, `loader.py`, and the known-keys allowlist
+  so values set in `swarm.yaml` persist instead of reverting to defaults.
+- Added `tests/test_config.py::TestEveryScalarFieldRoundTrips` — a generic guard
+  that introspects every nested config dataclass and fails if any scalar field
+  doesn't survive a round-trip, so future fields can't be silently dropped.
+
 ## [2026.5.31.7] - 2026-05-31
 
 ### Features

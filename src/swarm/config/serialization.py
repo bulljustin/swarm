@@ -15,6 +15,8 @@ from swarm.config.models import (
     PlaybookConfig,
     ProviderTuning,
     QueenConfig,
+    ResourceConfig,
+    SandboxConfig,
     StateThresholds,
     TestConfig,
     WorkerConfig,
@@ -244,6 +246,40 @@ def _serialize_optional(config: HiveConfig, data: dict[str, Any]) -> None:
     if config.tunnel_domain:
         data["tunnel_domain"] = config.tunnel_domain
     _serialize_integrations_optional(config, data)
+    _serialize_resources_optional(config, data)
+    _serialize_sandbox_optional(config, data)
+
+
+def _serialize_resources_optional(config: HiveConfig, data: dict[str, Any]) -> None:
+    """Serialize ResourceConfig when it diverges from defaults (lean YAML)."""
+    r = config.resources
+    if r == ResourceConfig():
+        return
+    data["resources"] = {
+        "enabled": r.enabled,
+        "poll_interval": r.poll_interval,
+        "elevated_swap_pct": r.elevated_swap_pct,
+        "elevated_mem_pct": r.elevated_mem_pct,
+        "high_swap_pct": r.high_swap_pct,
+        "high_mem_pct": r.high_mem_pct,
+        "critical_swap_pct": r.critical_swap_pct,
+        "critical_mem_pct": r.critical_mem_pct,
+        "suspend_on_high": r.suspend_on_high,
+        "dstate_scan": r.dstate_scan,
+        "dstate_threshold_sec": r.dstate_threshold_sec,
+    }
+
+
+def _serialize_sandbox_optional(config: HiveConfig, data: dict[str, Any]) -> None:
+    """Serialize SandboxConfig when it diverges from defaults (lean YAML)."""
+    s = config.sandbox
+    if s == SandboxConfig():
+        return
+    data["sandbox"] = {
+        "enabled": s.enabled,
+        "min_claude_version": s.min_claude_version,
+        "settings_overrides": dict(s.settings_overrides),
+    }
 
 
 def _serialize_drones(config: HiveConfig) -> dict[str, Any]:
@@ -271,6 +307,16 @@ def _serialize_drones(config: HiveConfig) -> dict[str, Any]:
         "idle_nudge_debounce_seconds": d.idle_nudge_debounce_seconds,
         "assign_affinity_floor": d.assign_affinity_floor,
         "assign_operator_engagement_minutes": d.assign_operator_engagement_minutes,
+        "context_warning_threshold": d.context_warning_threshold,
+        "context_critical_threshold": d.context_critical_threshold,
+        "speculation_enabled": d.speculation_enabled,
+        "idle_nudge_max_repeats": d.idle_nudge_max_repeats,
+        "native_goal_enabled": d.native_goal_enabled,
+        "native_goal_max_turns": d.native_goal_max_turns,
+        "user_request_plan_mode": d.user_request_plan_mode,
+        "dreamer_interval_seconds": d.dreamer_interval_seconds,
+        "dreamer_lookback_hours": d.dreamer_lookback_hours,
+        "dreamer_min_pattern_count": d.dreamer_min_pattern_count,
         "approval_rules": [{"pattern": r.pattern, "action": r.action} for r in d.approval_rules],
     }
     if d.allowed_read_paths:

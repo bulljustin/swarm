@@ -1588,3 +1588,59 @@ class TestNotificationsLoader:
         assert n.templates == {"worker_stung": "Worker {name} died"}
         assert n.webhook.url == "https://hooks.example.com/swarm"
         assert n.webhook.events == ["worker_stung"]
+
+
+class TestEveryScalarFieldRoundTrips:
+    """Guard against silent config loss: every scalar field of every nested
+    config section must survive serialize -> save -> load.
+
+    This is the test whose absence let drones (10 fields), resources (whole
+    section), and sandbox silently drop on save. It introspects the dataclasses
+    so any future field added to a section is covered automatically — if a new
+    field isn't wired through serialize/loader, this test fails.
+    """
+
+    @staticmethod
+    def _nondefault(value: object) -> object | None:
+        # Return a clearly-different value for scalar types; None to skip
+        # non-scalars (str/list/dict — covered by dedicated round-trip tests).
+        if isinstance(value, bool):
+            return not value
+        if isinstance(value, int):
+            return value + 777
+        if isinstance(value, float):
+            return value + 333.0
+        return None
+
+    def test_all_nested_scalar_fields_survive_roundtrip(self, tmp_path):
+        import dataclasses
+
+        base = HiveConfig()
+        section_kwargs: dict[str, object] = {}
+        section_overrides: dict[str, dict[str, object]] = {}
+        for f in dataclasses.fields(HiveConfig):
+            val = getattr(base, f.name)
+            if not (dataclasses.is_dataclass(val) and not isinstance(val, type)):
+                continue
+            overrides = {}
+            for sub in dataclasses.fields(val):
+                nv = self._nondefault(getattr(val, sub.name))
+                if nv is not None:
+                    overrides[sub.name] = nv
+            if overrides:
+                section_kwargs[f.name] = type(val)(**overrides)
+                section_overrides[f.name] = overrides
+
+        cfg = HiveConfig(**section_kwargs)
+        out = tmp_path / "swarm.yaml"
+        save_config(cfg, str(out))
+        loaded = _parse_config(out)
+
+        lost: dict[str, list[str]] = {}
+        for section, overrides in section_overrides.items():
+            orig = getattr(cfg, section)
+            new = getattr(loaded, section)
+            dropped = [n for n in overrides if getattr(new, n) != getattr(orig, n)]
+            if dropped:
+                lost[section] = dropped
+        assert not lost, f"scalar config fields dropped on round-trip: {lost}"
