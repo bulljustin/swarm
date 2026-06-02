@@ -84,6 +84,11 @@ class ResourceSnapshot:
     psi_io_avg10: float = 0.0
     swap_in_per_sec: float = 0.0
     swap_out_per_sec: float = 0.0
+    # Raw cumulative vmstat swap counters at snapshot time. Internal plumbing
+    # so the monitor loop can carry them forward as the next tick's "prev"
+    # without re-reading /proc/vmstat on the event loop (not serialized).
+    swap_in_counter: int = 0
+    swap_out_counter: int = 0
     top_workers_by_rss: list[tuple[str, int]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -274,15 +279,18 @@ def _read_proc_status_rss(pid: int) -> int:
     return 0
 
 
-def _build_parent_map() -> dict[int, list[int]] | None:
-    """Walk ``/proc`` once and return a ``{ppid: [pid, ...]}`` map.
+def _parse_proc_stat_map() -> tuple[dict[int, list[int]], dict[int, tuple[str, str]]] | None:
+    """Walk ``/proc`` once → ``(parent_map, stat_cache)``.
 
-    Returns ``None`` if ``/proc`` itself is unreadable. Per-pid stat
-    parse failures are silently skipped — the snapshot path tolerates
-    partial maps so a single zombie or vanished process can't poison
-    the whole walk.
+    ``parent_map`` is ``{ppid: [pid, ...]}``; ``stat_cache`` is
+    ``{pid: (comm, state_char)}``. Returns ``None`` if ``/proc`` itself is
+    unreadable. Per-pid parse failures are silently skipped — the snapshot
+    path tolerates partial maps so a single zombie or vanished process can't
+    poison the whole walk. Single source for both ``top_workers_by_rss`` and
+    ``find_dstate_descendants`` so the walk + parse isn't duplicated.
     """
     parent_map: dict[int, list[int]] = {}
+    stat_cache: dict[int, tuple[str, str]] = {}
     try:
         entries = os.listdir(_PROC_ROOT)
     except OSError:
@@ -294,22 +302,23 @@ def _build_parent_map() -> dict[int, list[int]] | None:
         try:
             with open(f"{_PROC_ROOT}/{pid}/stat") as f:
                 stat_line = f.read()
-            close_paren = stat_line.rfind(")")
-            if close_paren == -1:
-                continue
+            open_paren = stat_line.index("(")
+            close_paren = stat_line.rindex(")")
+            comm = stat_line[open_paren + 1 : close_paren]
             fields = stat_line[close_paren + 2 :].split()
             if len(fields) >= 2:
                 ppid = int(fields[1])
                 parent_map.setdefault(ppid, []).append(pid)
+                stat_cache[pid] = (comm, fields[0])
         except (OSError, ValueError, IndexError):
             continue
-    return parent_map
+    return parent_map, stat_cache
 
 
-def _walk_descendants(root_pid: int, parent_map: dict[int, list[int]]) -> set[int]:
-    """Return ``{root_pid}`` plus all transitive children per ``parent_map``."""
-    descendants: set[int] = {root_pid}
-    queue: collections.deque[int] = collections.deque([root_pid])
+def _walk_descendants(root_pids: set[int], parent_map: dict[int, list[int]]) -> set[int]:
+    """Return ``root_pids`` plus all transitive children per ``parent_map``."""
+    descendants: set[int] = set(root_pids)
+    queue: collections.deque[int] = collections.deque(root_pids)
     while queue:
         pid = queue.popleft()
         for child in parent_map.get(pid, []):
@@ -336,13 +345,14 @@ def top_workers_by_rss(
     if not worker_names:
         return []
 
-    parent_map = _build_parent_map()
-    if parent_map is None:
+    result = _parse_proc_stat_map()
+    if result is None:
         return []
+    parent_map, _ = result
 
     totals: list[tuple[str, int]] = []
     for root_pid, name in worker_names.items():
-        descendants = _walk_descendants(root_pid, parent_map)
+        descendants = _walk_descendants({root_pid}, parent_map)
         # Sum kB then convert to MB. Integer MB is enough for a "top
         # consumers" widget; sub-MB precision is noise.
         rss_kb = sum(_read_proc_status_rss(p) for p in descendants)
@@ -350,40 +360,6 @@ def top_workers_by_rss(
 
     totals.sort(key=lambda item: item[1], reverse=True)
     return totals[:top_n]
-
-
-def _get_descendants(root_pids: set[int]) -> set[int]:
-    """Walk /proc to find all descendant PIDs of the given root PIDs."""
-    parent_map: dict[int, list[int]] = {}
-    try:
-        for entry in os.listdir(_PROC_ROOT):
-            if not entry.isdigit():
-                continue
-            pid = int(entry)
-            try:
-                with open(f"{_PROC_ROOT}/{pid}/stat") as f:
-                    stat_line = f.read()
-                close_paren = stat_line.rfind(")")
-                if close_paren == -1:
-                    continue
-                fields = stat_line[close_paren + 2 :].split()
-                if len(fields) >= 2:
-                    ppid = int(fields[1])
-                    parent_map.setdefault(ppid, []).append(pid)
-            except (OSError, ValueError, IndexError):
-                continue
-    except OSError:
-        return set()
-
-    descendants: set[int] = set()
-    queue = collections.deque(root_pids)
-    while queue:
-        pid = queue.popleft()
-        for child in parent_map.get(pid, []):
-            if child not in descendants:
-                descendants.add(child)
-                queue.append(child)
-    return descendants
 
 
 def find_dstate_descendants(root_pids: set[int]) -> dict[int, str]:
@@ -401,43 +377,14 @@ def find_dstate_descendants(root_pids: set[int]) -> dict[int, str]:
     if not root_pids:
         return {}
 
-    # Single-pass: read every /proc/*/stat once, collecting parent→child
-    # relationships AND D-state info (comm + state char) in one pass.
-    parent_map: dict[int, list[int]] = {}
-    stat_cache: dict[int, tuple[str, str]] = {}  # pid → (comm, state_char)
-    try:
-        for entry in os.listdir(_PROC_ROOT):
-            if not entry.isdigit():
-                continue
-            pid = int(entry)
-            try:
-                with open(f"{_PROC_ROOT}/{pid}/stat") as f:
-                    stat_line = f.read()
-                open_paren = stat_line.index("(")
-                close_paren = stat_line.rindex(")")
-                comm = stat_line[open_paren + 1 : close_paren]
-                fields = stat_line[close_paren + 2 :].split()
-                if len(fields) >= 2:
-                    state_char = fields[0]
-                    ppid = int(fields[1])
-                    parent_map.setdefault(ppid, []).append(pid)
-                    stat_cache[pid] = (comm, state_char)
-            except (OSError, ValueError, IndexError):
-                continue
-    except OSError:
+    result = _parse_proc_stat_map()
+    if result is None:
         return {}
+    parent_map, stat_cache = result
 
-    # Walk descendant tree
-    descendants: set[int] = set(root_pids)
-    queue = collections.deque(root_pids)
-    while queue:
-        pid = queue.popleft()
-        for child in parent_map.get(pid, []):
-            if child not in descendants:
-                descendants.add(child)
-                queue.append(child)
+    descendants = _walk_descendants(set(root_pids), parent_map)
 
-    # Filter to D-state from cache (no second /proc read)
+    # Filter to D-state from the cache (no second /proc read)
     return {
         pid: comm
         for pid in descendants
@@ -530,7 +477,6 @@ def _read_psi_snapshot() -> tuple[bool, float, float, float]:
 def take_snapshot(
     worker_pids: set[int],
     *,
-    enabled: bool = True,
     dstate_scan: bool = True,
     elevated_swap_pct: float = 40.0,
     elevated_mem_pct: float = 80.0,
@@ -642,5 +588,7 @@ def take_snapshot(
         psi_io_avg10=psi_io,
         swap_in_per_sec=swap_in_rate,
         swap_out_per_sec=swap_out_rate,
+        swap_in_counter=cur_in,
+        swap_out_counter=cur_out,
         top_workers_by_rss=top,
     )

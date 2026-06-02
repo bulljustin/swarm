@@ -10,6 +10,30 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.2] - 2026-06-02
+
+### Features
+
+### Changes
+
+- Resource monitor `/proc` walk de-duplicated: `top_workers_by_rss` and
+  `find_dstate_descendants` now share a single `_parse_proc_stat_map` walk +
+  `_walk_descendants` helper (removed the copy-pasted parse in three places and
+  the dead `_get_descendants`). Dropped the unused `enabled` param from
+  `take_snapshot`.
+
+### Fixes
+
+- The resource-monitor loop no longer re-reads `/proc/vmstat` synchronously on
+  the event loop each tick — `take_snapshot` already captures the cumulative
+  swap counters inside its worker thread, and the loop now carries those
+  forward (counters ride `ResourceSnapshot` as internal fields, excluded from
+  `to_dict`).
+- Added a positive test for D-state detection (`find_dstate_descendants` with a
+  mock `/proc` containing a `state=D` descendant) — previously only empty-input
+  and a no-op error-path test existed (the latter monkeypatched a function the
+  code didn't call).
+
 ## [2026.6.1] - 2026-06-01
 
 ### Features

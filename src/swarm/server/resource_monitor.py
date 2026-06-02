@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from swarm.logging import get_logger
-from swarm.resources.monitor import _VMSTAT_PATH, parse_vmstat_swap, take_snapshot
+from swarm.resources.monitor import take_snapshot
 
 if TYPE_CHECKING:
     from swarm.config import ResourceConfig
@@ -190,14 +190,17 @@ class ResourceMonitor:
                         worker_names=worker_names,
                     )
                     self.handle_snapshot(snap)
-                    # Task #352: stash the cumulative-counter snapshot
-                    # for the next tick so swap-I/O delta math has a
-                    # baseline. We re-read /proc/vmstat directly here
-                    # rather than threading the absolute counters
-                    # through ``ResourceSnapshot`` — they're state-only,
-                    # not part of the API surface.
-                    cur_in, cur_out = parse_vmstat_swap(_VMSTAT_PATH)
-                    self._prev_swap_io = (cur_in, cur_out, snap.timestamp)
+                    # Carry the cumulative swap counters forward as the next
+                    # tick's baseline. ``take_snapshot`` already captured them
+                    # inside the worker thread, so reuse those instead of
+                    # re-reading /proc/vmstat on the event loop. They ride the
+                    # snapshot as internal fields (excluded from to_dict), so
+                    # they stay off the API surface.
+                    self._prev_swap_io = (
+                        snap.swap_in_counter,
+                        snap.swap_out_counter,
+                        snap.timestamp,
+                    )
                 except Exception:
                     _log.debug("resource monitor tick failed", exc_info=True)
         except asyncio.CancelledError:

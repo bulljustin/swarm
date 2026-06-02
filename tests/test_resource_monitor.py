@@ -736,16 +736,40 @@ class TestResourceSnapshotPhase352Serialization:
 
 
 class TestFindDstateDescendants:
+    @staticmethod
+    def _write_stat(proc_root, pid: int, comm: str, state: str, ppid: int) -> None:
+        d = proc_root / str(pid)
+        d.mkdir()
+        # /proc/<pid>/stat: "pid (comm) state ppid ..." (padded trailing fields).
+        trailing = "0 -1 0 0 0 0 0 0 0 0 20 0 1 0"
+        (d / "stat").write_text(f"{pid} ({comm}) {state} {ppid} {pid} {pid} {trailing}\n")
+
     def test_empty_pids(self):
         result = find_dstate_descendants(set())
         assert result == {}
 
-    def test_no_proc_access(self, monkeypatch):
-        # When /proc is not accessible, should return empty dict gracefully
-        monkeypatch.setattr(
-            "swarm.resources.monitor._get_descendants",
-            lambda pids: set(),
-        )
-        result = find_dstate_descendants({1})
-        # Will try to read /proc/1/stat which likely fails — should not crash
-        assert isinstance(result, dict)
+    def test_no_proc_access(self, monkeypatch, tmp_path):
+        # Unreadable /proc → empty dict, no crash.
+        monkeypatch.setattr("swarm.resources.monitor._PROC_ROOT", str(tmp_path / "nonexistent"))
+        assert find_dstate_descendants({1}) == {}
+
+    def test_detects_d_state_descendant(self, monkeypatch, tmp_path):
+        # A worker (state S) with a child stuck in uninterruptible sleep (D).
+        proc_root = tmp_path / "proc"
+        proc_root.mkdir()
+        self._write_stat(proc_root, 1000, "worker", "S", 0)
+        self._write_stat(proc_root, 1001, "blocked-io", "D", 1000)
+        monkeypatch.setattr("swarm.resources.monitor._PROC_ROOT", str(proc_root))
+
+        result = find_dstate_descendants({1000})
+        assert result == {1001: "blocked-io"}
+
+    def test_ignores_non_dstate_and_unrelated(self, monkeypatch, tmp_path):
+        proc_root = tmp_path / "proc"
+        proc_root.mkdir()
+        self._write_stat(proc_root, 1000, "worker", "S", 0)
+        self._write_stat(proc_root, 1001, "running-child", "R", 1000)  # not D
+        self._write_stat(proc_root, 2000, "other", "D", 1)  # D but not a descendant
+        monkeypatch.setattr("swarm.resources.monitor._PROC_ROOT", str(proc_root))
+
+        assert find_dstate_descendants({1000}) == {}
