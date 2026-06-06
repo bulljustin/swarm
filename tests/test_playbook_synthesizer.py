@@ -161,3 +161,17 @@ async def test_invalid_scope_defaults_global(tmp_path):
     s, _ = _synth(tmp_path, queen=_Queen(bad))
     pb = await s.synthesize(_Task(), worker="swarm", resolution=_RESOLUTION)
     assert pb is not None and pb.scope == "global"
+
+
+@pytest.mark.asyncio
+async def test_synthesize_caps_oversized_body(tmp_path):
+    """#playbooks-audit A: a runaway Queen body is truncated to MAX_BODY_LEN so
+    it can't bloat the DB / SKILL.md."""
+    from swarm.playbooks.models import MAX_BODY_LEN
+
+    verdict = dict(_GOOD)
+    verdict["body"] = "x" * (MAX_BODY_LEN + 5000)
+    s, store = _synth(tmp_path, queen=_Queen(verdict))
+    pb = await s.synthesize(_Task(), worker="swarm", resolution=_RESOLUTION)
+    assert pb is not None
+    assert len(pb.body) == MAX_BODY_LEN

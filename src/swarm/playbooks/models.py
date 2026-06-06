@@ -18,6 +18,11 @@ from enum import Enum
 # construction/checks consistent without a brittle enum.
 SCOPE_GLOBAL = "global"
 
+# Upper bound on a playbook body. Synthesizer/consolidator cap the
+# LLM-generated body to this so a malformed/runaway Queen response can't bloat
+# the DB or the rendered SKILL.md. Generous — real procedures run a few KB.
+MAX_BODY_LEN = 8000
+
 
 def project_scope(repo: str) -> str:
     return f"project:{repo}"

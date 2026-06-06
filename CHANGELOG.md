@@ -10,6 +10,26 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.6.14] - 2026-06-06
+
+### Features
+
+### Changes
+
+- Playbooks: extracted the duplicated headless-Queen invocation from the
+  synthesizer and consolidator into a shared `playbooks/_queen.py`
+  (`run_queen_json` + the `QueenLike` protocol), so the cancellation-reraise +
+  error-log-and-bail semantics live in one place.
+
+### Fixes
+
+- Playbooks: the LLM-generated playbook `body` is now capped at `MAX_BODY_LEN`
+  (8000) in both the synthesizer and the consolidator merge — consistent with
+  the existing name/title/trigger caps — so a malformed/runaway Queen response
+  can't bloat the DB or the rendered `SKILL.md`.
+- Playbooks: typed the `PlaybookConsolidator._maybe_merge(a, b)` parameters as
+  `Playbook` (were untyped).
+
 ## [2026.6.6.13] - 2026-06-06
 
 ### Features

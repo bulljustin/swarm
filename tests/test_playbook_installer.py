@@ -67,7 +67,7 @@ def test_scope_filtering(store, worker_dir):
 
 def test_idempotent_and_stale_cleanup(store, worker_dir):
     _active(store, "keep")
-    pb = _active(store, "drop")
+    _active(store, "drop")
     install_worker_playbooks(worker_dir, store, worker_name="api")
     skills_dir = worker_dir / ".claude" / "skills"
     assert (skills_dir / "pb-drop").exists()
@@ -78,7 +78,6 @@ def test_idempotent_and_stale_cleanup(store, worker_dir):
     assert n == 1
     assert (skills_dir / "pb-keep" / "SKILL.md").is_file()
     assert not (skills_dir / "pb-drop").exists()
-    assert pb  # silence unused
 
 
 def test_install_noop_does_not_touch_bundled_skills(store, worker_dir):

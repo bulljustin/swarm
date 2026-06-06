@@ -12,14 +12,15 @@ not affect task completion.
 
 from __future__ import annotations
 
-import asyncio
 import re
 import time
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from swarm.drones.log import LogCategory, SystemAction
 from swarm.logging import get_logger
+from swarm.playbooks._queen import QueenLike, run_queen_json
 from swarm.playbooks.models import (
+    MAX_BODY_LEN,
     SCOPE_GLOBAL,
     Playbook,
     PlaybookStatus,
@@ -43,15 +44,11 @@ def _slug(text: str) -> str:
     return _SLUG_RE.sub("-", (text or "").strip().lower()).strip("-")[:64]
 
 
-class _Queen(Protocol):
-    async def ask(self, prompt: str, **kwargs: Any) -> dict[str, Any]: ...
-
-
 class PlaybookSynthesizer:
     def __init__(
         self,
         *,
-        queen: _Queen,
+        queen: QueenLike,
         store: PlaybookStore,
         config: PlaybookConfig,
         drone_log: SystemLog | None = None,
@@ -132,12 +129,10 @@ class PlaybookSynthesizer:
         self._seen.add(key)
         self._calls.append(self._now())
 
-        try:
-            result = await self._queen.ask(self._build_prompt(task, resolution), stateless=True)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            _log.warning("playbook synthesis: queen call failed", exc_info=True)
+        result = await run_queen_json(
+            self._queen, self._build_prompt(task, resolution), context="playbook synthesis"
+        )
+        if result is None:
             self._buzz(SystemAction.PLAYBOOK_SKIPPED, worker, "queen error")
             return None
 
@@ -171,7 +166,7 @@ class PlaybookSynthesizer:
             self._buzz(SystemAction.PLAYBOOK_SKIPPED, worker, "queen declined")
             return None
         name = _slug(str(result.get("name") or result.get("title") or task.title))
-        body = str(result.get("body") or "").strip()
+        body = str(result.get("body") or "").strip()[:MAX_BODY_LEN]
         if not name or not body:
             self._buzz(SystemAction.PLAYBOOK_SKIPPED, worker, "empty name/body")
             return None

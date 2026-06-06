@@ -149,3 +149,29 @@ async def test_sweep_respects_max_merges(store):
     q = _Queen({"merge": True, "keep": "A", "body": "m", "trigger": "t"})
     merges = await PlaybookConsolidator(queen=q, store=store).consolidate_once(max_merges=2)
     assert merges == 2  # capped — third pair left for the next sweep
+
+
+async def test_sweep_invalid_keep_does_not_merge(store):
+    """#playbooks-audit D: an invalid `keep` (neither A nor B) is refused —
+    no merge, both stay ACTIVE."""
+    _active(store, "a", "wrap sender in retry with exponential backoff dead letter")
+    _active(store, "b", "wrap the sender in retry exponential backoff dead letter twice")
+    q = _Queen({"merge": True, "keep": "C", "body": "x", "trigger": "t"})
+    c = PlaybookConsolidator(queen=q, store=store)
+    assert await c.consolidate_once() == 0
+    assert store.get("a").status == PlaybookStatus.ACTIVE
+    assert store.get("b").status == PlaybookStatus.ACTIVE
+
+
+async def test_sweep_caps_merged_body(store):
+    """#playbooks-audit A: a runaway merged body is truncated to MAX_BODY_LEN."""
+    from swarm.playbooks.models import MAX_BODY_LEN
+
+    _active(store, "a", "wrap sender in retry with exponential backoff dead letter")
+    _active(store, "b", "wrap the sender in retry exponential backoff dead letter again")
+    q = _Queen({"merge": True, "keep": "A", "body": "y" * (MAX_BODY_LEN + 3000), "trigger": "t"})
+    merges = await PlaybookConsolidator(queen=q, store=store).consolidate_once()
+    assert merges == 1
+    a, b = store.get("a"), store.get("b")
+    survivor = a if a.status == PlaybookStatus.ACTIVE else b
+    assert len(survivor.body) == MAX_BODY_LEN

@@ -12,12 +12,12 @@ failure never propagates. Never merges across scope.
 
 from __future__ import annotations
 
-import asyncio
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING
 
 from swarm.drones.log import LogCategory, SystemAction
 from swarm.logging import get_logger
-from swarm.playbooks.models import Playbook, PlaybookStatus
+from swarm.playbooks._queen import QueenLike, run_queen_json
+from swarm.playbooks.models import MAX_BODY_LEN, Playbook, PlaybookStatus
 
 if TYPE_CHECKING:
     from swarm.db.playbook_store import PlaybookStore
@@ -26,15 +26,11 @@ if TYPE_CHECKING:
 _log = get_logger("playbooks.consolidator")
 
 
-class _Queen(Protocol):
-    async def ask(self, prompt: str, **kwargs: Any) -> dict[str, Any]: ...
-
-
 class PlaybookConsolidator:
     def __init__(
         self,
         *,
-        queen: _Queen,
+        queen: QueenLike,
         store: PlaybookStore,
         drone_log: SystemLog | None = None,
     ) -> None:
@@ -105,15 +101,9 @@ class PlaybookConsolidator:
                 merges += 1
         return merges
 
-    async def _maybe_merge(self, a, b) -> bool:
-        try:
-            result = await self._queen.ask(self._prompt(a, b), stateless=True)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            _log.warning("consolidation: queen call failed", exc_info=True)
-            return False
-        if not isinstance(result, dict) or result.get("error"):
+    async def _maybe_merge(self, a: Playbook, b: Playbook) -> bool:
+        result = await run_queen_json(self._queen, self._prompt(a, b), context="consolidation")
+        if result is None or result.get("error"):
             return False
         if not result.get("merge"):
             return False
@@ -124,7 +114,7 @@ class PlaybookConsolidator:
             keep, loser = b, a
         else:
             return False
-        body = str(result.get("body") or keep.body).strip()
+        body = str(result.get("body") or keep.body).strip()[:MAX_BODY_LEN]
         trigger = str(result.get("trigger") or keep.trigger).strip()
         if not body:
             return False
