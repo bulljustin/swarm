@@ -77,8 +77,21 @@ def test_activate_demotes_prior_active(board):
 def test_activate_skips_operator_action(board):
     op = board.create(title="org admin", task_type=TaskType.OPERATOR)
     board.assign(op.id, "api")
-    assert board.activate(op.id) is False  # operator-action never goes ACTIVE
+    assert board.activate(op.id) is None  # operator-action never goes ACTIVE (#611 P3)
     assert board.get(op.id).status != TaskStatus.ACTIVE
+
+
+def test_activate_returns_demoted_ids(board):
+    """#611 P3: activate() is the single ACTIVE chokepoint and returns the ids
+    it demoted (so callers can log history/jira), or None if not startable."""
+    a = _assigned(board, "a", "api")
+    b = _assigned(board, "b", "api")
+    assert board.activate(a.id) == []  # nothing else active yet
+    demoted = board.activate(b.id)  # must demote a
+    assert demoted == [a.id]
+    assert board.get(a.id).status == TaskStatus.ASSIGNED
+    assert board.get(b.id).status == TaskStatus.ACTIVE
+    assert board.get(b.id).started_at is not None  # activate stamps started_at
 
 
 # --- INV-1/2/3 reconciliation ------------------------------------------

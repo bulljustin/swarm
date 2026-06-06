@@ -10,6 +10,22 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.6.6] - 2026-06-06
+
+### Features
+
+### Changes
+
+- (#611 P3) `board.activate()` is now the single ACTIVE chokepoint. It demotes
+  any other ACTIVE task for the worker (INV-1), starts this one (stamps
+  `started_at`), persists + notifies, and returns the demoted ids (or `None` if
+  not startable). `start_task` and the state-tracker's BUZZING promotion both
+  route through it instead of each hand-rolling demote + `task.start()` — so the
+  drone path now persists + notifies (it previously did neither). Removed the
+  now-orphaned `board.demote_other_active()`.
+
+### Fixes
+
 ## [2026.6.6.5] - 2026-06-06
 
 ### Features

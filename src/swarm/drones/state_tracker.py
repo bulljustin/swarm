@@ -301,7 +301,12 @@ class WorkerStateTracker:
         if not assigned:
             return
         assigned.sort(key=lambda t: t.updated_at, reverse=True)
-        assigned[0].start()
+        # #611 P3: route through the single ACTIVE chokepoint so the promotion
+        # persists + notifies (the old raw task.start() here skipped both) and
+        # shares the one-active demote logic. The cap above means there's
+        # nothing to demote, but using activate() keeps every ACTIVE transition
+        # on one path.
+        self.task_board.activate(assigned[0].id)
         self._emit("state_changed", worker)
 
     def _log_state_transition(self, worker: Worker, prev: WorkerState) -> None:

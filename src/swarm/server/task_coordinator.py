@@ -146,6 +146,29 @@ class TaskCoordinator:
 
     # ----- start -----
 
+    def _activate_with_history(self, task_id: str, worker_name: str, actor: str) -> bool:
+        """Route a task to ACTIVE through the single board chokepoint
+        (``board.activate``) and log the history/jira side-effects for the
+        demotions + the activation. Returns False if the task isn't startable
+        (operator-action / vanished). Split out of ``start_task`` to keep it
+        under the complexity gate (#611 P3).
+        """
+        d = self._d
+        demoted = d.task_board.activate(task_id)
+        if demoted is None:
+            return False
+        for demoted_id in demoted:
+            d.task_history.append(
+                demoted_id,
+                TaskAction.UNASSIGNED,
+                actor="system",
+                detail=f"demoted to ASSIGNED — {worker_name} started newer task",
+            )
+            d.jira_svc.fire_export(demoted_id, "assigned")
+        d.task_history.append(task_id, TaskAction.STARTED, actor=actor, detail=worker_name)
+        d.jira_svc.fire_export(task_id, "active")
+        return True
+
     async def start_task(
         self,
         task_id: str,
@@ -255,26 +278,11 @@ class TaskCoordinator:
             )
             return False
 
-        # Demote any other ACTIVE task for this worker — only one task per
-        # worker can be IN PROGRESS at a time. Older dispatches still queued
-        # in the PTY input buffer revert to ASSIGNED so the dashboard reflects
-        # what the worker is actually processing right now.
-        demoted = d.task_board.demote_other_active(worker_name, keep_task_id=task_id)
-        for demoted_id in demoted:
-            d.task_history.append(
-                demoted_id,
-                TaskAction.UNASSIGNED,
-                actor="system",
-                detail=f"demoted to ASSIGNED — {worker_name} started newer task",
-            )
-            d.jira_svc.fire_export(demoted_id, "assigned")
-
-        # Transition to IN_PROGRESS
-        task.start()
-        d.task_board._persist()
-        d.task_board._notify()
-        d.task_history.append(task_id, TaskAction.STARTED, actor=actor, detail=worker_name)
-        d.jira_svc.fire_export(task_id, "active")
+        # #611 P3: activate via the single board chokepoint + log history/jira.
+        if not self._activate_with_history(task_id, worker_name, actor):
+            # Not startable (operator-action or vanished). Defensive — status
+            # was checked above.
+            return False
         if d.pilot:
             d.pilot.wake_worker(worker_name)
         d.drone_log.add(

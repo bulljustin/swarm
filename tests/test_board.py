@@ -202,48 +202,20 @@ class TestLifecycle:
 class TestActiveExclusivity:
     """Only one ACTIVE task per worker — older ACTIVE rows must be demoted."""
 
-    def test_demote_other_active_keeps_target(self):
-        board = _make_board()
-        t1 = board.create("a")
-        t2 = board.create("b")
-        board.assign(t1.id, "alice")
-        board.assign(t2.id, "alice")
-        t1.start()
-        t2.start()
-        assert t1.status == TaskStatus.ACTIVE
-        assert t2.status == TaskStatus.ACTIVE
-
-        demoted = board.demote_other_active("alice", keep_task_id=t2.id)
-
-        assert demoted == [t1.id]
-        assert t1.status == TaskStatus.ASSIGNED
-        assert t2.status == TaskStatus.ACTIVE
-
-    def test_demote_other_active_ignores_other_workers(self):
+    def test_activate_only_demotes_same_worker(self):
+        """activate() demotes the worker's OWN other ACTIVE tasks, never another
+        worker's (#611 P3 — preserves demote_other_active's cross-worker
+        isolation now that activate() is the single chokepoint)."""
         board = _make_board()
         t1 = board.create("a")
         t2 = board.create("b")
         board.assign(t1.id, "alice")
         board.assign(t2.id, "bob")
-        t1.start()
-        t2.start()
+        board.activate(t1.id)
+        board.activate(t2.id)  # bob's activation must not demote alice's task
 
-        board.demote_other_active("alice", keep_task_id="some-other-id")
-
-        # alice's active gets demoted; bob's stays untouched
-        assert t1.status == TaskStatus.ASSIGNED
+        assert t1.status == TaskStatus.ACTIVE
         assert t2.status == TaskStatus.ACTIVE
-
-    def test_demote_other_active_no_competing_tasks(self):
-        board = _make_board()
-        t = board.create("a")
-        board.assign(t.id, "alice")
-        t.start()
-
-        demoted = board.demote_other_active("alice", keep_task_id=t.id)
-
-        assert demoted == []
-        assert t.status == TaskStatus.ACTIVE
 
     def test_reconcile_keeps_earliest_started(self):
         """#611 P2: reconcile keeps the EARLIEST-STARTED (in-flight) ACTIVE task
@@ -627,7 +599,7 @@ class TestBlockForOperator:
         board = _make_board()
         t = self._active(board)
         board.block_for_operator(t.id, "operator-blocked: waiting")
-        assert board.activate(t.id)  # operator re-dispatch / hand-back
+        assert board.activate(t.id) is not None  # operator re-dispatch / hand-back (#611 P3)
         assert t.status == TaskStatus.ACTIVE
         assert t.block_reason == ""
 

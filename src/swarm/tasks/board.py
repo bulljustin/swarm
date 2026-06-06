@@ -404,50 +404,26 @@ class TaskBoard(EventEmitter):
             self._persist()
             self._notify()
 
-    def demote_other_active(self, worker_name: str, keep_task_id: str) -> list[str]:
-        """Demote any ACTIVE tasks for *worker_name* (other than *keep_task_id*) to ASSIGNED.
+    def activate(self, task_id: str) -> list[str] | None:
+        """The single ACTIVE chokepoint (#405 INV-1, #611 P3).
 
-        A worker can only meaningfully process one task at a time, so the
-        dashboard must show at most one ACTIVE task per worker. Returns the
-        list of task IDs that were demoted.
-        """
-        import time
-
-        demoted: list[str] = []
-        with self._lock:
-            for task in self._tasks.values():
-                if (
-                    task.assigned_worker == worker_name
-                    and task.status == TaskStatus.ACTIVE
-                    and task.id != keep_task_id
-                ):
-                    task.status = TaskStatus.ASSIGNED
-                    task.updated_at = time.time()
-                    demoted.append(task.id)
-                    _log.info(
-                        "demoted task %s from ACTIVE to ASSIGNED (worker=%s, kept=%s)",
-                        task.id,
-                        worker_name,
-                        keep_task_id,
-                    )
-            if demoted:
-                self._persist()
-                self._notify()
-        return demoted
-
-    def activate(self, task_id: str) -> bool:
-        """#405 INV-1: set a task ACTIVE, enforcing ≤1 ACTIVE per worker.
-
-        Operator-action tasks never go ACTIVE (returns False). Any other
-        ACTIVE task for the same worker is demoted to ASSIGNED. Returns
-        True iff the task is now ACTIVE.
+        Demote any other ACTIVE task for this worker to ASSIGNED, then start
+        this one (``task.start()`` stamps ``started_at``), persist + notify.
+        Returns the list of demoted task ids (possibly empty), or ``None`` if
+        the task can't go ACTIVE (missing, or an operator-action task which
+        never goes ACTIVE). Callers own the history/jira side-effects for the
+        returned demotions and for the activation — keeping this the one place
+        that performs the demote+start board mutation (``start_task`` and the
+        state-tracker promotion both route through here instead of each
+        hand-rolling demote + ``task.start()``).
         """
         import time
 
         with self._lock:
             task = self._tasks.get(task_id)
             if task is None or task.is_operator_action:
-                return False
+                return None
+            demoted: list[str] = []
             worker = task.assigned_worker
             if worker:
                 for other in self._tasks.values():
@@ -458,10 +434,11 @@ class TaskBoard(EventEmitter):
                     ):
                         other.status = TaskStatus.ASSIGNED
                         other.updated_at = time.time()
+                        demoted.append(other.id)
             task.start()
             self._persist()
             self._notify()
-        return True
+        return demoted
 
     def current_task_for_worker(self, worker_name: str) -> SwarmTask | None:
         """#405 INV-3: a worker's current task IS its single ACTIVE task
