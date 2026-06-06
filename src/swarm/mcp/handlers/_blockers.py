@@ -90,6 +90,27 @@ def _handle_report_blocker(
     except (TypeError, ValueError):
         return [{"type": "text", "text": "'task_number' and 'blocked_by_task' must be integers."}]
 
+    # Task #609: reject self-referential blockers (task blocks itself).
+    # ``blocked_by`` never reaches a terminal status, so the IdleWatcher
+    # auto-clear in BlockerStore.has_active_blocker never fires — the row
+    # wedges the task in BLOCKED forever. And a BLOCKED task is uncloseable
+    # through the normal API: complete, queen_force_complete_task, and
+    # reassign all refuse it. Task #574 deadlocked exactly this way. Reject
+    # at the filing moment so the deadlock can never be created.
+    if task_number == blocked_by:
+        return [
+            {
+                "type": "text",
+                "text": (
+                    f"Cannot file blocker — task #{task_number} cannot block itself "
+                    "(blocked_by_task must be a different task). A self-referential "
+                    "blocker never auto-clears and wedges the task in BLOCKED. To "
+                    "suppress idle nudges during an operator-gated hold, park or "
+                    "complete the task instead."
+                ),
+            }
+        ]
+
     # Task #529: reject filings whose target is already in a terminal
     # status. The auto-clear in BlockerStore.has_active_blocker would
     # purge this row on the next IdleWatcher sweep anyway — but a

@@ -10,6 +10,23 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.6] - 2026-06-06
+
+### Features
+
+### Changes
+
+### Fixes
+
+- `swarm_report_blocker` now rejects a self-referential blocker
+  (`task_number == blocked_by_task`) with a clear, actionable error instead of
+  persisting it. A self-blocker never auto-clears (its `blocked_by` never
+  reaches a terminal status), which wedges the task in BLOCKED permanently —
+  and a BLOCKED task is uncloseable through the normal API (`complete`,
+  `queen_force_complete_task`, and reassign all refuse it). Task #574
+  deadlocked exactly this way; this guard makes the deadlock impossible to
+  create. (#609 PART B)
+
 ## [2026.6.2.2] - 2026-06-02
 
 ### Features

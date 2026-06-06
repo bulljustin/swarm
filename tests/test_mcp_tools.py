@@ -458,6 +458,27 @@ class TestReportBlocker:
         )
         assert "failed" in result[0]["text"].lower()
 
+    def test_report_blocker_rejects_self_block(self):
+        """#609: a task cannot block itself. A self-referential blocker
+        (task_number == blocked_by_task) never auto-clears — blocked_by never
+        reaches a terminal status — so it wedges the task in BLOCKED forever
+        (complete / force-complete / reassign all refuse a BLOCKED task). Task
+        #574 deadlocked exactly this way. Reject at the filing moment, before
+        the store is touched."""
+        d = self._daemon()
+        result = handle_tool_call(
+            d,
+            "admin",
+            "swarm_report_blocker",
+            {"task_number": 574, "blocked_by_task": 574},
+        )
+        text = result[0]["text"].lower()
+        assert "cannot file blocker" in text
+        assert "itself" in text
+        assert "#574" in result[0]["text"]
+        # No wedging row persisted.
+        d.blocker_store.report.assert_not_called()
+
     # ---- task #529: reject blocker filings against terminal targets ----
 
     def _daemon_with_board(self, target_status: str) -> MagicMock:
