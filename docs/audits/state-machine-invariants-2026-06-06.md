@@ -179,6 +179,25 @@ worker isn't actively on it), or surface "has blocker row" in the dashboard
 independently of status so the two can't silently disagree. Product call —
 flag for the operator, don't auto-change semantics.
 
+> **DECISION (2026-06-06, operator): leave as-is.** P1's 90s periodic reconcile
+> now bounds the divergence for an idle worker to ≤90s (`_recon_inv2` sets
+> BLOCKED once a worker with a blocker binding goes idle), and a BUZZING worker
+> shouldn't be BLOCKED anyway — so the residual divergence is benign. No code
+> change. Revisit only if operators report confusion from the UI showing a
+> blocker row on a non-BLOCKED task.
+
+---
+
+## Implementation status (#611)
+
+- **P1** periodic reconcile sweep — shipped `2026.6.6.4`
+- **P2** `started_at` + earliest-started `_recon_inv1` tiebreak — shipped `2026.6.6.5`
+- **P3** `board.activate()` single ACTIVE chokepoint (+ removed dead
+  `demote_other_active`) — shipped `2026.6.6.6`
+- **P4** `_persist`-time double-active self-heal — shipped `2026.6.6.7`
+- **P5** web routes through guarded board methods — shipped `2026.6.6.8`
+- **P6** blocker↔status coupling — operator decision: leave as-is (above)
+
 ### Suggested sequencing
 P1 (safety net) + P2 (tiebreak) first — together they make the reconciler
 *correct* and *timely*, neutralizing the whole incident class even before the
