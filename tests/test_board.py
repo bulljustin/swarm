@@ -227,8 +227,11 @@ class TestActiveExclusivity:
         t3 = board.create("c")
         for t in (t1, t2, t3):
             board.assign(t.id, "alice")
-            t.start()
-
+        # Force the 3-ACTIVE state directly. (Going through normal board ops is
+        # no longer possible — #611 P4's _persist self-heal collapses it — so we
+        # set status raw, then verify reconcile keeps the earliest-started.)
+        for t in (t1, t2, t3):
+            t.status = TaskStatus.ACTIVE
         # t1 started first; t3 was updated most recently. started_at decides.
         t1.started_at, t1.updated_at = 1000.0, 1000.0
         t2.started_at, t2.updated_at = 2000.0, 2000.0

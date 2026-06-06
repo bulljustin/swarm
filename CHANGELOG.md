@@ -10,6 +10,21 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.6.7] - 2026-06-06
+
+### Features
+
+### Changes
+
+### Fixes
+
+- (#611 P4) Defense in depth: `TaskBoard._persist` now self-heals a
+  >1-ACTIVE-per-worker state before it can reach disk — any mutation path that
+  bypasses the `activate()` chokepoint (now or in future) is collapsed to the
+  earliest-started task and logged at WARNING naming the offender. A
+  double-active can no longer be persisted silently regardless of how it was
+  produced.
+
 ## [2026.6.6.6] - 2026-06-06
 
 ### Features

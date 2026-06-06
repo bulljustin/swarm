@@ -68,8 +68,39 @@ class TaskBoard(EventEmitter):
 
     def _persist(self) -> None:
         """Save tasks to store if configured."""
+        self._assert_no_double_active()
         if self._store:
             self._store.save(self._tasks)
+
+    def _assert_no_double_active(self) -> None:
+        """Defense-in-depth (#611 P4): never let >1 ACTIVE per worker reach disk.
+
+        Any mutation path that produces a double-active — now or in future,
+        bypassing the ``activate()`` chokepoint — is self-healed here on the way
+        to persistence: keep the earliest-started (in-flight) task, demote the
+        rest, and log loudly so the offending path is visible. Assumes the
+        caller holds ``self._lock`` (``_persist`` is always called under it) —
+        does NOT re-acquire (the lock isn't reentrant) and does NOT call
+        ``_persist`` (the in-progress save writes the healed state).
+        """
+        import time
+
+        by_worker = self._group_active_by_worker()
+        for wname, tasks in by_worker.items():
+            if len(tasks) <= 1:
+                continue
+            tasks.sort(key=_active_keep_key)
+            for task in tasks[1:]:
+                task.status = TaskStatus.ASSIGNED
+                task.updated_at = time.time()
+                _log.warning(
+                    "INV-1 violation reached _persist for worker %s — self-healed "
+                    "(kept in-flight #%s, demoted #%s); a mutation path bypassed "
+                    "the activate() chokepoint",
+                    wname,
+                    tasks[0].number,
+                    task.number,
+                )
 
     def persist(self, task: SwarmTask | None = None) -> None:
         """Public persist + notify hook.

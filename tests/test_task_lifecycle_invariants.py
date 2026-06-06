@@ -181,3 +181,36 @@ def test_reconcile_inv1_null_started_at_falls_back_to_created_at(board):
 
     assert board.get(first.id).status == TaskStatus.ACTIVE  # earliest created survives
     assert board.get(second.id).status == TaskStatus.ASSIGNED
+
+
+# --- P4 (#611): persist-time double-active self-heal (defense in depth) ---
+
+
+def test_persist_self_heals_double_active(board, caplog):
+    """#611 P4: a >1-ACTIVE-per-worker state that bypassed the activate()
+    chokepoint can never reach disk — _persist() self-heals it (keeping the
+    earliest-started in-flight task) and logs a WARNING naming the offender."""
+    import logging
+
+    a = _assigned(board, "a", "w1")
+    b = _assigned(board, "b", "w1")
+    # Raw double-active, bypassing activate():
+    a.status = TaskStatus.ACTIVE
+    b.status = TaskStatus.ACTIVE
+    a.started_at, a.updated_at = 1000.0, 1000.0
+    b.started_at, b.updated_at = 2000.0, 2000.0
+
+    with caplog.at_level(logging.WARNING):
+        board._persist()
+
+    assert a.status == TaskStatus.ACTIVE  # earliest-started kept
+    assert b.status == TaskStatus.ASSIGNED
+    assert any("_persist" in r.message or "self-healed" in r.message for r in caplog.records)
+
+
+def test_persist_leaves_single_active_untouched(board):
+    """One ACTIVE per worker persists unchanged (no spurious demotion)."""
+    a = _assigned(board, "a", "w1")
+    a.status = TaskStatus.ACTIVE
+    board._persist()
+    assert a.status == TaskStatus.ACTIVE
