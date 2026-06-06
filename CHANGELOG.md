@@ -10,6 +10,22 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.6.8] - 2026-06-06
+
+### Features
+
+### Changes
+
+- (#611 P5) Web task routes no longer write `task.status` raw. The create
+  action refuses to author a task straight into ACTIVE/BLOCKED/ASSIGNED
+  (ACTIVE must go through the `activate()` chokepoint, BLOCKED via the blocker
+  flow, ASSIGNED via the worker-assign branch) — only backlog/unassigned/done/
+  failed lane authoring is allowed. The Backlog→Unassigned "promote / Hand to
+  Queen" transition (edit-modal dropdown + promote button) now routes through
+  the guarded `board.approve_task()` instead of a raw `task.approve()`.
+
+### Fixes
+
 ## [2026.6.6.7] - 2026-06-06
 
 ### Features

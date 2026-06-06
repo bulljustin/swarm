@@ -167,3 +167,56 @@ async def test_invariant_reconcile_loop_disabled_skips(daemon, monkeypatch):
     monkeypatch.setattr("swarm.server.daemon.asyncio.sleep", fake_sleep)
     await daemon._invariant_reconcile_loop()
     assert calls == []  # disabled — never reconciles
+
+
+# --- P5 (#611): web routes go through guarded board methods ---
+
+
+class _FakeReq:
+    """Minimal request: handle_action_create_task only needs app['daemon'] +
+    an awaitable post() form."""
+
+    def __init__(self, daemon, data: dict[str, str]):
+        self.app = {"daemon": daemon}
+        self._data = data
+
+    async def post(self):
+        from multidict import MultiDict
+
+        return MultiDict(self._data)
+
+
+def test_apply_status_change_backlog_to_unassigned(daemon):
+    """#611 P5: Backlog→Unassigned routes through board.approve_task (guarded)
+    rather than a raw task.approve() + manual persist."""
+    from swarm.web.routes.tasks import _apply_status_change
+
+    t = daemon.task_board.create(title="b")
+    t.status = TaskStatus.BACKLOG
+    _apply_status_change(daemon, t.id, "backlog", "unassigned")
+    assert daemon.task_board.get(t.id).status == TaskStatus.UNASSIGNED
+
+
+@pytest.mark.asyncio
+async def test_create_task_refuses_active_status(daemon):
+    """#611 P5: the create route refuses to author a task straight into ACTIVE
+    (must go through the activate() chokepoint / INV-1); it stays in its
+    default lane instead."""
+    import json
+
+    from swarm.web.routes.tasks import handle_action_create_task
+
+    resp = await handle_action_create_task(_FakeReq(daemon, {"title": "x", "status": "active"}))
+    created = daemon.task_board.get(json.loads(resp.text)["id"])
+    assert created.status != TaskStatus.ACTIVE
+
+
+@pytest.mark.asyncio
+async def test_create_task_allows_terminal_authoring(daemon):
+    """Lane/terminal authoring (recording historical work) is still allowed."""
+    import json
+
+    from swarm.web.routes.tasks import handle_action_create_task
+
+    resp = await handle_action_create_task(_FakeReq(daemon, {"title": "hist", "status": "done"}))
+    assert daemon.task_board.get(json.loads(resp.text)["id"]).status == TaskStatus.DONE

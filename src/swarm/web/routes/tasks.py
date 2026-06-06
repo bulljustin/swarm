@@ -29,16 +29,11 @@ def _apply_status_change(d: SwarmDaemon, task_id: str, current: str, target: str
     if target == "unassigned" and current in ("assigned", "active"):
         d.unassign_task(task_id)
     elif target == "unassigned" and current == "backlog":
-        # Backlog → Unassigned is the "promote / Hand to Queen"
-        # transition (task.approve()). The edit-modal status dropdown
-        # must do the same thing the dedicated promote button does —
-        # without this case the change silently no-ops.
-        from swarm.tasks.task import TaskStatus
-
-        task = d.task_board.get(task_id)
-        if task is not None and task.status == TaskStatus.BACKLOG:
-            task.approve()
-            d.task_board.persist(task)
+        # Backlog → Unassigned is the "promote / Hand to Queen" transition.
+        # Route through the guarded board method (#611 P5) — it enforces the
+        # BACKLOG precondition and persists + notifies — instead of a raw
+        # task.approve() + manual persist.
+        d.task_board.approve_task(task_id)
     elif target == "done" and current in ("assigned", "active"):
         d.complete_task(task_id)
     elif target == "failed" and current == "active":
@@ -53,6 +48,13 @@ if TYPE_CHECKING:
     from swarm.server.daemon import SwarmDaemon
 
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+# Statuses an operator may author a task directly INTO via the create modal.
+# ACTIVE is excluded — it must go through the activate() chokepoint (INV-1);
+# BLOCKED is excluded — it's set only by the blocker / operator-park flow;
+# ASSIGNED is handled by the worker-assign branch (it needs a worker). Authoring
+# straight into any of those raw would bypass the guards. (#611 P5)
+_CREATABLE_STATUSES = frozenset({"backlog", "unassigned", "done", "failed"})
 
 
 @handle_errors
@@ -93,16 +95,25 @@ async def handle_action_create_task(request: web.Request) -> web.Response:
     if requested_status == "assigned" and chosen_worker:
         await d.assign_task(task.id, chosen_worker)
     elif requested_status and requested_status != task.status.value:
-        # Direct flip — covers Backlog/Unassigned creation and the rare case
-        # of a task being authored straight into Done/Failed (e.g. recording
-        # historical work). The board notifies subscribers on persist.
+        # Direct lane authoring — Backlog/Unassigned creation, or the rare case
+        # of recording historical work straight into Done/Failed. ACTIVE/BLOCKED/
+        # ASSIGNED are refused here (#611 P5): ACTIVE must go through activate()
+        # (INV-1), BLOCKED via the blocker flow, ASSIGNED via the worker-assign
+        # branch above. The board notifies subscribers on persist.
         from swarm.tasks.task import TaskStatus
 
-        try:
-            task.status = TaskStatus(requested_status)
-            d.task_board.persist(task)
-        except ValueError:
-            _log.warning("create_task: ignoring unknown status %r", requested_status)
+        if requested_status not in _CREATABLE_STATUSES:
+            _log.warning(
+                "create_task: refusing to author status %r; left as %s",
+                requested_status,
+                task.status.value,
+            )
+        else:
+            try:
+                task.status = TaskStatus(requested_status)
+                d.task_board.persist(task)
+            except ValueError:
+                _log.warning("create_task: ignoring unknown status %r", requested_status)
 
     console_log(f'Task created: "{task.title}" ({task.priority.value}, {task.task_type.value})')
     return web.json_response({"id": task.id, "title": task.title}, status=201)
@@ -264,8 +275,7 @@ async def handle_action_promote_task(request: web.Request) -> web.Response:
             409,
         )
 
-    task.approve()  # Backlog → Unassigned
-    d.task_board.persist(task)
+    d.task_board.approve_task(task_id)  # Backlog → Unassigned (#611 P5: guarded path)
     console_log(f"Task promoted to Unassigned: {task_id[:8]}")
     return web.json_response({"status": "unassigned", "task_id": task_id})
 
