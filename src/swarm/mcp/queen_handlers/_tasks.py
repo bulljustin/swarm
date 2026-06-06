@@ -88,7 +88,11 @@ TOOLS: list[dict[str, Any]] = [
             "board.  Use when the worker is demonstrably done but silent — e.g. "
             "they went RESTING after shipping and their PTY shows the outcome but "
             "they never issued the completion call.  Always include a resolution "
-            "summary noting what the worker actually did (so task_history has it)."
+            "summary noting what the worker actually did (so task_history has it).  "
+            "Also the way to close a WEDGED task: it force-closes from ANY "
+            "non-terminal status (including BLOCKED) and clears any blocker rows "
+            "pinning the task — the only clean path out of a self-block/cycle "
+            "deadlock that the normal completion API refuses."
         ),
         "inputSchema": {
             "type": "object",
@@ -250,8 +254,11 @@ def _handle_force_complete_task(
 
     # d.complete_task handles board + history + drone_log + downstream
     # triggers.  Passing actor='queen' lets the audit trail distinguish
-    # her calls from operator button clicks.
-    ok = d.complete_task(task.id, actor="queen", resolution=resolution, verify=False)
+    # her calls from operator button clicks.  force=True is what makes this a
+    # real override: it clears any blocker rows and completes from ANY
+    # non-terminal status, including BLOCKED — the wedged-task case the
+    # status-gated path refuses (the #574 deadlock).
+    ok = d.complete_task(task.id, actor="queen", resolution=resolution, verify=False, force=True)
     if not ok:
         return [
             {

@@ -35,6 +35,7 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/tasks/{task_id}/assign", handle_assign_task)
     app.router.add_post("/api/tasks/{task_id}/start", handle_start_task)
     app.router.add_post("/api/tasks/{task_id}/complete", handle_complete_task)
+    app.router.add_post("/api/tasks/{task_id}/force-complete", handle_force_complete_task)
     app.router.add_post("/api/tasks/{task_id}/fail", handle_fail_task)
     app.router.add_post("/api/tasks/{task_id}/unassign", handle_unassign_task)
     app.router.add_post("/api/tasks/{task_id}/reopen", handle_reopen_task)
@@ -392,6 +393,26 @@ async def handle_complete_task(request: web.Request) -> web.Response:
     resolution = body.get("resolution", "") if body else ""
     d.complete_task(task_id, resolution=resolution)
     return web.json_response({"status": "done", "task_id": task_id})
+
+
+@handle_errors
+async def handle_force_complete_task(request: web.Request) -> web.Response:
+    """Force-complete a wedged task (operator override).
+
+    Clears any blocker rows pinning the task and completes it from ANY
+    non-terminal status, including BLOCKED — the clean path out of a
+    self-block / blocker-cycle deadlock that the normal /complete endpoint
+    refuses (it requires ASSIGNED/ACTIVE). Returns 400 if the task is
+    missing or already terminal.
+    """
+    d = get_daemon(request)
+    task_id = request.match_info["task_id"]
+    body = await request.json() if request.can_read_body else {}
+    resolution = body.get("resolution", "") if body else ""
+    ok = d.complete_task(task_id, actor="user", resolution=resolution, force=True)
+    if not ok:
+        return json_error(f"Could not force-complete task {task_id} (missing or already terminal)")
+    return web.json_response({"status": "done", "task_id": task_id, "forced": True})
 
 
 @handle_errors

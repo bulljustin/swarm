@@ -84,3 +84,27 @@ def test_self_heals_multi_active_resting_worker(daemon):
 
     statuses = {daemon.task_board.get(a.id).status, daemon.task_board.get(b.id).status}
     assert statuses == {TaskStatus.ASSIGNED}  # zero ACTIVE — fully healed
+
+
+def test_complete_task_force_closes_blocked(daemon):
+    """#609: complete_task(force=True) closes a wedged BLOCKED task that the
+    normal status-gated path refuses — the clean force-close capability that
+    replaces the #574 fail→reopen→approve→assign→complete workaround."""
+    from swarm.server.daemon import TaskOperationError
+
+    t = daemon.task_board.create(title="wedged")
+    daemon.task_board.assign(t.id, "w1")
+    daemon.task_board.activate(t.id)
+    daemon.task_board.block_for_operator(t.id, "operator hold")
+    assert t.status == TaskStatus.BLOCKED
+
+    # Normal completion refuses a BLOCKED task.
+    with pytest.raises(TaskOperationError):
+        daemon.complete_task(t.id, resolution="x")
+    assert daemon.task_board.get(t.id).status == TaskStatus.BLOCKED
+
+    # Force path closes it end-to-end.
+    assert daemon.complete_task(t.id, resolution="done e2e", force=True) is True
+    closed = daemon.task_board.get(t.id)
+    assert closed.status == TaskStatus.DONE
+    assert closed.resolution == "done e2e"

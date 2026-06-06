@@ -389,6 +389,8 @@ class TestForceCompleteTask:
             {"number": 1, "resolution": "done", "reason": "audit"},
         )
         daemon.complete_task.assert_called_once()
+        # #609: force=True is what lets this close a wedged BLOCKED task.
+        assert daemon.complete_task.call_args.kwargs.get("force") is True
         assert "Force-completed #1" in _text(result)
 
 

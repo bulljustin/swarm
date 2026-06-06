@@ -403,6 +403,8 @@ class TestReportBlocker:
         d.drone_log = MagicMock()
         d.blocker_store = MagicMock()
         d.blocker_store.report = MagicMock()
+        # Default: no cycle (a bare MagicMock would be truthy → reject all).
+        d.blocker_store.would_create_cycle.return_value = False
         return d
 
     def test_report_blocker_persists(self):
@@ -477,6 +479,25 @@ class TestReportBlocker:
         assert "itself" in text
         assert "#574" in result[0]["text"]
         # No wedging row persisted.
+        d.blocker_store.report.assert_not_called()
+
+    def test_report_blocker_rejects_cycle(self):
+        """#609: filing a blocker that would close a cycle (blocked_by already
+        waits on task_number, directly or transitively) is rejected before the
+        store write — same uncloseable deadlock as a self-block, spread across
+        tasks."""
+        d = self._daemon()
+        d.blocker_store.would_create_cycle.return_value = True
+        result = handle_tool_call(
+            d,
+            "admin",
+            "swarm_report_blocker",
+            {"task_number": 100, "blocked_by_task": 200},
+        )
+        text = result[0]["text"].lower()
+        assert "cannot file blocker" in text
+        assert "cycle" in text
+        d.blocker_store.would_create_cycle.assert_called_once_with(100, 200)
         d.blocker_store.report.assert_not_called()
 
     # ---- task #529: reject blocker filings against terminal targets ----

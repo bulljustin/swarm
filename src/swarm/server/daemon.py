@@ -1850,9 +1850,10 @@ class SwarmDaemon(EventEmitter):
         resolution: str = "",
         *,
         verify: bool = True,
+        force: bool = False,
     ) -> bool:
         return self.tasks_coord.complete_task(
-            task_id, actor=actor, resolution=resolution, verify=verify
+            task_id, actor=actor, resolution=resolution, verify=verify, force=force
         )
 
     # --- PlaybookOps shims (extracted to swarm.server.playbook_ops) ---

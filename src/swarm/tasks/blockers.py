@@ -155,6 +155,69 @@ class BlockerStore:
             _log.info("blocker cleared: worker=%s task=#%d", worker, task_number)
         return deleted
 
+    def clear_for_task(self, task_number: int) -> int:
+        """Remove every blocker row for a blocked task, across all workers.
+
+        Returns the number of rows deleted. Used by force-complete to unwedge
+        a task before closing it — a BLOCKED task may carry blocker rows filed
+        by more than one worker, and ``clear`` only targets a single
+        ``(worker, task_number)`` pair.
+        """
+        conn = self._db._conn
+        if conn is None:
+            return 0
+        with self._db._lock:
+            cur = conn.execute(
+                "DELETE FROM worker_blockers WHERE task_number = ?",
+                (int(task_number),),
+            )
+            conn.commit()
+            removed = cur.rowcount
+        if removed:
+            _log.info("blockers cleared for task #%d: %d row(s)", task_number, removed)
+        return removed
+
+    def would_create_cycle(self, task_number: int, blocked_by: int) -> bool:
+        """True if filing "``task_number`` blocked_by ``blocked_by``" would
+        close a cycle in the blocker graph — i.e. ``blocked_by`` already waits
+        on ``task_number`` directly or transitively.
+
+        Such a cycle is as uncloseable as a self-block: no task in the ring can
+        ever reach a terminal status, so the IdleWatcher auto-clear never
+        fires and every task in it wedges in BLOCKED. The edge direction is
+        ``task → blocked_by`` ("task waits on blocked_by"); we walk forward
+        from ``blocked_by`` along existing edges and report a cycle if we
+        reach ``task_number`` (the degenerate self-block, ``task_number ==
+        blocked_by``, is reported immediately).
+        """
+        task_number = int(task_number)
+        blocked_by = int(blocked_by)
+        conn = self._db._conn
+        if conn is None:
+            return False
+        try:
+            with self._db._lock:
+                rows = conn.execute(
+                    "SELECT task_number, blocked_by_task FROM worker_blockers"
+                ).fetchall()
+        except sqlite3.Error:
+            _log.warning("blocker would_create_cycle query failed", exc_info=True)
+            return False
+        edges: dict[int, set[int]] = {}
+        for t, b in rows:
+            edges.setdefault(int(t), set()).add(int(b))
+        seen: set[int] = set()
+        stack = [blocked_by]
+        while stack:
+            cur = stack.pop()
+            if cur == task_number:
+                return True
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(edges.get(cur, ()))
+        return False
+
     def has_active_blocker(
         self,
         worker: str,

@@ -446,6 +446,28 @@ class TaskCoordinator:
 
     # ----- complete -----
 
+    def _acquire_and_board_complete(
+        self, task_id: str, resolution: str, *, force: bool
+    ) -> tuple[SwarmTask, bool]:
+        """Resolve the task and complete it on the board (force-aware).
+
+        Normal path requires ASSIGNED/ACTIVE. Force path accepts any status,
+        clears the task's blocker rows (a wedged BLOCKED task may carry rows
+        from more than one worker), and completes past the status gate.
+        Returns ``(task, board_result)``; the caller runs the shared
+        downstream side-effects when ``board_result`` is True. Split out to
+        keep ``complete_task`` under the complexity gate.
+        """
+        d = self._d
+        if force:
+            task = d._require_task(task_id, None)
+            store = getattr(d, "blocker_store", None)
+            if store is not None:
+                store.clear_for_task(task.number)
+            return task, d.task_board.force_complete(task_id, resolution=resolution)
+        task = d._require_task(task_id, {TaskStatus.ASSIGNED, TaskStatus.ACTIVE})
+        return task, d.task_board.complete(task_id, resolution=resolution)
+
     def complete_task(
         self,
         task_id: str,
@@ -453,6 +475,7 @@ class TaskCoordinator:
         resolution: str = "",
         *,
         verify: bool = True,
+        force: bool = False,
     ) -> bool:
         """Complete a task. Raises if not found or wrong state.
 
@@ -465,16 +488,21 @@ class TaskCoordinator:
         ``verify=False`` from explicit operator/Queen overrides
         (``queen_force_complete_task``) — those are deliberate
         completions that the verifier must respect.
+
+        ``force=True`` is the operator/Queen override for a *wedged* task:
+        it clears any blocker rows pinning the task and completes it from
+        ANY non-terminal status, including BLOCKED — which the normal
+        status-gated path refuses (the #574 deadlock). All the downstream
+        completion side-effects below run identically for both paths.
         """
         d = self._d
-        task = d._require_task(task_id, {TaskStatus.ASSIGNED, TaskStatus.ACTIVE})
+        task, result = self._acquire_and_board_complete(task_id, resolution, force=force)
 
-        # Capture email info before completing (status changes on complete)
+        # Email info is stable across completion (only status/completed_at/
+        # resolution change), so reading it here is equivalent to before.
         source_email_id = task.source_email_id
         task_title = task.title
         task_type = task.task_type.value
-
-        result = d.task_board.complete(task_id, resolution=resolution)
         if result:
             # Knowledge consolidation: capture worker's last output as learnings
             d.playbook_ops.consolidate_learnings(task)

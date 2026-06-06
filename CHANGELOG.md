@@ -10,6 +10,33 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.6.2] - 2026-06-06
+
+### Features
+
+- Force-close capability for wedged BLOCKED tasks (#609 follow-up). A task
+  stuck in BLOCKED could not be closed through any normal path
+  (`complete` / reassign / `queen_force_complete_task` all require
+  ASSIGNED/ACTIVE) — #574 had to be unstuck via a fragile
+  fail→reopen→approve→assign→complete chain. New clean path:
+  `complete_task(force=True)` clears the task's blocker rows
+  (`BlockerStore.clear_for_task`) and completes from any non-terminal status
+  via `board.force_complete`, reusing all the normal completion side-effects.
+  Exposed two ways: `queen_force_complete_task` now force-closes BLOCKED tasks
+  (was a no-op against them), and a new operator endpoint
+  `POST /api/tasks/{id}/force-complete`.
+
+### Changes
+
+### Fixes
+
+- `swarm_report_blocker` now rejects blocker filings that would close a CYCLE
+  (A→B→A or longer), not just direct self-blocks. `BlockerStore.would_create_cycle`
+  walks the blocker graph; a filing where `blocked_by` already waits on
+  `task_number` (directly or transitively) is refused before the write — it
+  would wedge every task in the ring in BLOCKED with no terminal task to fire
+  the auto-clear. (#609 follow-up)
+
 ## [2026.6.6] - 2026-06-06
 
 ### Features

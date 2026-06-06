@@ -122,6 +122,36 @@ class TestLifecycle:
         t = board.create("work")
         assert board.complete(t.id) is False
 
+    def test_force_complete_from_blocked(self):
+        """force_complete closes a wedged BLOCKED task that normal complete
+        refuses — the only programmatic way out of the #574 deadlock."""
+        board = _make_board()
+        t = board.create("wedged")
+        board.assign(t.id, "alice")
+        board.activate(t.id)
+        board.block_for_operator(t.id, "operator hold")
+        assert t.status == TaskStatus.BLOCKED
+        # Normal complete refuses a BLOCKED task...
+        assert board.complete(t.id, resolution="x") is False
+        assert t.status == TaskStatus.BLOCKED
+        # ...force_complete closes it.
+        assert board.force_complete(t.id, resolution="done end-to-end") is True
+        assert t.status == TaskStatus.DONE
+        assert t.resolution == "done end-to-end"
+
+    def test_force_complete_already_terminal_is_noop(self):
+        board = _make_board()
+        t = board.create("work")
+        board.assign(t.id, "alice")
+        board.complete(t.id)
+        assert t.status == TaskStatus.DONE
+        # Already terminal — force_complete won't re-stamp it.
+        assert board.force_complete(t.id, resolution="again") is False
+
+    def test_force_complete_missing_task(self):
+        board = _make_board()
+        assert board.force_complete("nonexistent") is False
+
     def test_fail_assigned_task(self):
         board = _make_board()
         t = board.create("work")

@@ -136,6 +136,25 @@ def _handle_report_blocker(
     store = getattr(d, "blocker_store", None)
     if store is None:
         return [{"type": "text", "text": "Blocker store unavailable on this daemon."}]
+
+    # Task #609: reject filings that would close a blocker CYCLE (A→B→A, or
+    # longer). ``blocked_by`` already waits on ``task_number`` directly or
+    # transitively, so adding this edge rings every task in the loop in BLOCKED
+    # with no terminal task to trigger the auto-clear — the same uncloseable
+    # deadlock as a self-block, just spread across N tasks.
+    if store.would_create_cycle(task_number, blocked_by):
+        return [
+            {
+                "type": "text",
+                "text": (
+                    f"Cannot file blocker — #{blocked_by} already waits on "
+                    f"#{task_number} (directly or transitively), so this would "
+                    "create a blocker cycle that wedges every task in the loop "
+                    "in BLOCKED. Resolve the upstream chain, or park/complete "
+                    "instead of cross-blocking."
+                ),
+            }
+        ]
     try:
         store.report(worker_name, task_number, blocked_by, reason=reason)
     except Exception as exc:  # defensive — DB errors shouldn't crash the handler

@@ -293,6 +293,34 @@ class TaskBoard(EventEmitter):
             self._notify()
         return True
 
+    def force_complete(self, task_id: str, resolution: str = "") -> bool:
+        """Complete a task from ANY non-terminal status, including BLOCKED.
+
+        Operator/Queen override for tasks the normal status-gated
+        :meth:`complete` refuses. A wedged BLOCKED task can't be closed any
+        other way — ``complete``, reassign, and ``queen_force_complete_task``
+        (which routes through ``complete``) all require ASSIGNED/ACTIVE; #574
+        deadlocked exactly there. Already-terminal tasks (DONE/FAILED) are
+        left untouched so this can't silently re-stamp closed work. Callers
+        should clear the task's blocker rows first — the coordinator's force
+        path does (``BlockerStore.clear_for_task``).
+        """
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return False
+            if task.status in (TaskStatus.DONE, TaskStatus.FAILED):
+                _log.warning(
+                    "cannot force-complete task %s — already %s", task_id, task.status.value
+                )
+                return False
+            prev = task.status.value
+            task.complete(resolution=resolution)
+            _log.info("task %s force-completed (was %s)", task_id, prev)
+            self._persist()
+            self._notify()
+        return True
+
     def fail(self, task_id: str) -> bool:
         with self._lock:
             task = self._tasks.get(task_id)

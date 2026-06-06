@@ -3112,3 +3112,26 @@ async def test_bulk_reopen(client):
     assert resp.status == 200
     data = await resp.json()
     assert data["succeeded"] == 1
+
+
+@pytest.mark.asyncio
+async def test_force_complete_endpoint_closes_blocked(client, daemon):
+    """#609: POST /api/tasks/{id}/force-complete closes a wedged BLOCKED task
+    that the normal /complete endpoint refuses."""
+    from swarm.tasks.task import TaskStatus
+
+    t = daemon.task_board.create("wedged")
+    daemon.task_board.assign(t.id, "alice")
+    daemon.task_board.activate(t.id)
+    daemon.task_board.block_for_operator(t.id, "operator hold")
+    assert t.status == TaskStatus.BLOCKED
+
+    resp = await client.post(
+        f"/api/tasks/{t.id}/force-complete",
+        json={"resolution": "done via endpoint"},
+        headers=_API_HEADERS,
+    )
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["forced"] is True
+    assert daemon.task_board.get(t.id).status == TaskStatus.DONE

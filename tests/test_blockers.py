@@ -55,6 +55,45 @@ class TestBlockerStore:
         # Re-clearing is a no-op (returns False).
         assert store.clear("admin", 246) is False
 
+    def test_clear_for_task_removes_all_workers(self, store):
+        """clear_for_task drops every blocker row for a blocked task, across
+        workers (a wedged BLOCKED task may carry rows from more than one).
+        Used by force-complete to unwedge before closing."""
+        store.report("admin", 574, 600)
+        store.report("hub", 574, 601)  # same blocked task, different worker
+        store.report("nexus", 580, 590)  # unrelated
+        removed = store.clear_for_task(574)
+        assert removed == 2
+        assert store.list_for_worker("admin") == []
+        assert store.list_for_worker("hub") == []
+        assert len(store.list_for_worker("nexus")) == 1  # untouched
+        # Idempotent.
+        assert store.clear_for_task(574) == 0
+
+    def test_would_create_cycle_direct(self, store):
+        """A→B exists; adding B→A would close a 2-cycle (A↔B both wedged)."""
+        store.report("admin", 100, 200)  # 100 blocked_by 200
+        assert store.would_create_cycle(200, 100) is True
+
+    def test_would_create_cycle_transitive(self, store):
+        """A→B, B→C exist; adding C→A closes a 3-cycle."""
+        store.report("w1", 100, 200)
+        store.report("w2", 200, 300)
+        assert store.would_create_cycle(300, 100) is True
+
+    def test_would_create_cycle_false_for_acyclic(self, store):
+        store.report("w1", 100, 200)
+        store.report("w2", 200, 300)
+        # 100 blocked_by 400 — no path from 400 back to 100.
+        assert store.would_create_cycle(100, 400) is False
+
+    def test_would_create_cycle_self(self, store):
+        """The degenerate 1-cycle (task blocks itself) is also a cycle."""
+        assert store.would_create_cycle(100, 100) is True
+
+    def test_would_create_cycle_empty_store(self, store):
+        assert store.would_create_cycle(100, 200) is False
+
     def test_has_active_blocker_noop_when_none_reported(self, store):
         assert store.has_active_blocker("admin") is None
 
