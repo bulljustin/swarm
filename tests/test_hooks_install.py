@@ -554,3 +554,62 @@ def test_skill_files_have_frontmatter():
         front = body.split("---", 2)[1]
         assert "name:" in front, f"{name} missing name field"
         assert "description:" in front, f"{name} missing description"
+
+
+def _hook_commands(settings: dict, event: str) -> list[str]:
+    return [
+        h.get("command", "")
+        for entry in settings.get("hooks", {}).get(event, [])
+        for h in entry.get("hooks", [])
+    ]
+
+
+def test_install_registers_lifecycle_hooks(tmp_path, monkeypatch):
+    """#hooks-audit D: install() must actually wire the hook scripts into
+    settings.json — previously only permissions were asserted."""
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+    install(global_install=False)
+    settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+
+    assert any(c.endswith("approval-hook.sh") for c in _hook_commands(settings, "PreToolUse"))
+    assert any(
+        c.endswith("session-start-hook.sh") for c in _hook_commands(settings, "SessionStart")
+    )
+    assert any(c.endswith("session-end-hook.sh") for c in _hook_commands(settings, "SessionEnd"))
+    for event in ("SubagentStart", "SubagentStop", "PreCompact", "PostCompact"):
+        assert any(c.endswith("event-hook.sh") for c in _hook_commands(settings, event)), event
+
+
+def test_install_preserves_existing_hooks_while_adding_ours(tmp_path, monkeypatch):
+    """Merge must keep a worker's pre-existing PreToolUse hook AND add ours."""
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+    settings_path = tmp_path / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {"matcher": "Bash", "hooks": [{"type": "command", "command": "mine.sh"}]}
+                    ]
+                }
+            }
+        )
+    )
+    install(global_install=False)
+    cmds = _hook_commands(json.loads(settings_path.read_text()), "PreToolUse")
+    assert "mine.sh" in cmds  # user's hook preserved
+    assert any(c.endswith("approval-hook.sh") for c in cmds)  # ours added
+
+
+def test_install_backs_up_corrupt_settings(tmp_path, monkeypatch):
+    """A malformed settings.json is backed up to .json.bak, then a valid file
+    is written fresh (rather than crashing the install)."""
+    monkeypatch.setattr(Path, "cwd", lambda: tmp_path)
+    settings_path = tmp_path / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text("{ not valid json")
+    install(global_install=False)
+    assert settings_path.with_suffix(".json.bak").exists()
+    settings = json.loads(settings_path.read_text())  # valid again
+    assert "Edit" in settings["permissions"]["allow"]

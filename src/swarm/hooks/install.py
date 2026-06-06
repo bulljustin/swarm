@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,27 @@ from swarm.logging import get_logger
 from swarm.providers import get_provider
 
 _log = get_logger("hooks.install")
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write *content* to *path* atomically (temp file in the same dir + replace).
+
+    A plain ``Path.write_text`` truncates the target first, so a crash mid-write
+    leaves the worker's settings.json / .mcp.json corrupted or empty. ``os.replace``
+    is atomic on POSIX, so a reader/observer ever sees only the old or the new
+    complete file.
+    """
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _swarm_read_permissions() -> list[str]:
@@ -115,7 +138,7 @@ def install(global_install: bool = False, sandbox: object | None = None) -> None
     # CC version is new enough to support them.
     _apply_sandbox(settings, sandbox)
 
-    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    _atomic_write_text(settings_path, json.dumps(settings, indent=2) + "\n")
 
 
 def _apply_sandbox(settings: dict[str, Any], sandbox_cfg: object | None) -> None:
@@ -466,8 +489,11 @@ def _install_mcp_server(settings: dict[str, Any]) -> None:
                 # Keep the worker identity — only update the base URL (port may change)
                 worker_param = existing_url.split("?", 1)[1]
                 url = f"{url}?{worker_param}"
-        except (json.JSONDecodeError, Exception):
-            pass
+        except Exception as exc:
+            # A malformed .mcp.json here means we drop the ?worker= param and
+            # the worker would resolve as "unknown" at the MCP server (the #614
+            # churn failure mode) — log it rather than swallow silently.
+            _log.debug("could not preserve ?worker= from existing .mcp.json: %s", exc)
 
     mcp_config = {
         "mcpServers": {
@@ -477,7 +503,7 @@ def _install_mcp_server(settings: dict[str, Any]) -> None:
             }
         }
     }
-    mcp_path.write_text(json.dumps(mcp_config, indent=2) + "\n")
+    _atomic_write_text(mcp_path, json.dumps(mcp_config, indent=2) + "\n")
 
 
 def _resolve_mcp_url() -> str:
@@ -494,8 +520,8 @@ def _resolve_mcp_url() -> str:
             data = yaml.safe_load(config_path.read_text()) or {}
             port = data.get("port", 9090)
             return f"http://localhost:{port}/mcp"
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.debug("could not read MCP port from swarm config; using default: %s", exc)
     return "http://localhost:9090/mcp"
 
 
@@ -527,4 +553,4 @@ def uninstall(global_install: bool = False) -> None:
             settings.get("permissions", {}).pop("allow", None)
             if not settings.get("permissions"):
                 settings.pop("permissions", None)
-        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+        _atomic_write_text(settings_path, json.dumps(settings, indent=2) + "\n")

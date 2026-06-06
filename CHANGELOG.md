@@ -10,6 +10,29 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.6.11] - 2026-06-06
+
+### Features
+
+### Changes
+
+- Hooks installer: removed two orphan shell scripts (`complete_task_hook.sh`,
+  `cross_task_hook.sh`) — never installed (replaced by the
+  `swarm_complete_task` / `swarm_create_task` MCP tools; the installer only
+  legacy-*removes* them by name).
+
+### Fixes
+
+- Hooks installer: writes to a worker's `.claude/settings.json` and `.mcp.json`
+  are now atomic (temp file + `os.replace` via `_atomic_write_text`) — a crash
+  mid-write previously truncated/corrupted the worker's CC config; for `.mcp.json`
+  that meant losing the `?worker=` identity (the worker would then resolve as
+  `unknown` at the MCP server).
+- Hooks installer: the two silent `except … : pass` blocks (preserving the
+  `?worker=` param from an existing `.mcp.json`, and reading the MCP port from
+  config) now log at debug instead of swallowing — a malformed `.mcp.json` that
+  drops worker identity is no longer invisible.
+
 ## [2026.6.6.10] - 2026-06-06
 
 ### Features
