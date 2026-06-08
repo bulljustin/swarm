@@ -10,6 +10,20 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.8] - 2026-06-08
+
+### Features
+
+### Changes
+
+### Fixes
+
+- Mobile dashboard: the round terminal d-pad no longer overlaps the mobile
+  composer (send-bar) text input. A coarse-pointer rule lifts the d-pad clear of
+  the send bar whenever it's visible (`.detail-area:has(.mobile-send-bar.visible)
+  .term-dpad`), stacking higher when the jump-to-bottom pill is also up. Touch-
+  only; no desktop impact (the d-pad and send bar are both mobile-only).
+
 ## [2026.6.6.14] - 2026-06-06
 
 ### Features

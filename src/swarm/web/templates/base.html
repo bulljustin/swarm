@@ -1969,6 +1969,15 @@
             transition: bottom 150ms ease;
         }
         .term-dpad.dpad-raised { bottom: 64px; }  /* clear the pill */
+        /* Lift the d-pad clear of the mobile composer (send bar) whenever it's
+           visible, so the circular control never covers the text input (the
+           reported overlap). Coarse-pointer only — the send bar shows only on
+           touch; :has() reacts to its .visible toggle (same pattern as the
+           bottom-tabbed collapse rules elsewhere). */
+        @media (pointer: coarse) {
+            .detail-area:has(.mobile-send-bar.visible) .term-dpad { bottom: 68px; }
+            .detail-area:has(.mobile-send-bar.visible) .term-dpad.dpad-raised { bottom: 120px; }
+        }
         .term-dpad-btn {
             -webkit-appearance: none;
             appearance: none;
