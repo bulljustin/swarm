@@ -10,6 +10,19 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.8.3] - 2026-06-08
+
+### Features
+
+### Changes
+
+### Fixes
+
+- Mobile dashboard: the "↓ Jump to bottom" pill no longer crowds the composer /
+  command-bar zone. Same coarse-pointer `:has(.mobile-send-bar.visible)` pattern
+  as the d-pad raise — the pill lifts to clear the composer (bottom 68px) while
+  the d-pad stays above it. Touch-only; no desktop impact.
+
 ## [2026.6.8.2] - 2026-06-08
 
 ### Features
