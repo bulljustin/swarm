@@ -153,6 +153,23 @@ def _handle_send_message(
     from swarm.drones.log import LogCategory, SystemAction
     from swarm.worker.worker import QUEEN_WORKER_NAME
 
+    # Mass-broadcast gate (task #647). A worker cannot issue a swarm-wide
+    # directive or claim operator authority. Authority-claim patterns gate any
+    # recipient count; directive/policy language gates only when it fans out
+    # (broadcast to '*'). The Queen relaying her own message is exempt — she
+    # has the authority a worker lacks. Enforcement is deterministic on
+    # purpose (injection-proof); the Queen runs only as async enrichment.
+    if worker_name != QUEEN_WORKER_NAME:
+        from swarm.mcp.handlers._queen_relay import _gate_broadcast
+        from swarm.messages.broadcast_gate import classify_broadcast
+
+        verdict = classify_broadcast(content, is_broadcast=(recipient == "*"), fanout_count=1)
+        if verdict.blocked:
+            text = _gate_broadcast(
+                d, worker_name, recipient, msg_type, content, verdict.reason, verdict.matched
+            )
+            return [{"type": "text", "text": text}]
+
     # Wildcard = broadcast to every *registered* worker (minus the sender).
     # send(..., "*", ...) would write a single row whose read_at column
     # belongs to whichever worker called get_unread() first — so the

@@ -399,6 +399,26 @@ class TaskCoordinator:
         content = (getattr(message, "content", "") or "").strip()
         first_line = content.splitlines()[0] if content else "(no content)"
         title = f"Handoff from {sender}: {first_line[:70]}"
+        # task #647: a broadcast fanned to N idle recipients arrives as N
+        # near-identical handoff messages (different ids, same sender+content),
+        # and the per-recipient watcher sweep would spawn one task row each —
+        # the #638-645 incident where ONE directive rendered as 8 "tasks on
+        # many workers". A directive is not N tasks: collapse to a single
+        # tracked task by skipping when an open handoff with the same title
+        # already exists. The deduped recipient still gets a watcher nudge, so
+        # the broadcast isn't lost — it just isn't re-tracked N times.
+        existing = [
+            t
+            for t in board.all_tasks
+            if t.title == title and t.status not in (TaskStatus.DONE, TaskStatus.FAILED)
+        ]
+        if existing:
+            _log.info(
+                "spawn_handoff_task: dedup — open handoff '%s' exists, skipping %s",
+                title[:60],
+                recipient,
+            )
+            return False
         description = (
             f"Auto-spawned by the inter-worker watcher (task #442): "
             f"{recipient} was idle and task-less when {sender} sent a "

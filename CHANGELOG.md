@@ -10,6 +10,39 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.10.2] - 2026-06-10
+
+### Features
+
+- **Worker mass-broadcast gate (task #647).** Workers can no longer broadcast a
+  swarm-wide directive or claim operator authority unchecked. A deterministic
+  gate (`messages/broadcast_gate.py`) on `swarm_send_message` blocks before
+  delivery: operator-authority claims ("OPERATOR DIRECTIVE", "Brad said",
+  "standing policy") gate at any recipient count; directive/policy language
+  ("everyone should", "all workers must") gates on fan-out (`*`). Coordination
+  about the sender's OWN concrete change passes. A block escalates to the
+  operator (Attention card + `BROADCAST_GATED` buzz entry) and fires a
+  fire-and-forget headless-Queen provenance analysis. The Queen's own sends are
+  exempt. Deterministic by design — injection-proof where an LLM gate is not;
+  the Queen runs only as async enrichment (MCP handlers are synchronous).
+
+### Changes
+
+### Fixes
+
+- **Dashboard mixed-render after reload.** `#command-center` and `#detail-body`
+  both rendered visible in the markup with no default `display:none`, so the
+  correct single-panel view existed only after JS reconciled — and an
+  `os.execv` reload race could leave BOTH painted (a worker terminal *and* the
+  Queen panel). Visibility is now driven solely by the `body.cc-active` class
+  via CSS; the inline-display juggling in `show()`/`hide()`/`init()` is gone.
+- **Handoff fan-out: one directive is not N tasks (task #647 part 5).** An
+  all-workers handoff fanned to N idle recipients spawned one near-identical
+  task row each (the #638-645 incident — one directive shown as 8 "tasks on
+  many workers"). `spawn_handoff_task` now dedups by title against open tasks,
+  collapsing to a single tracked task; other recipients still get a watcher
+  nudge.
+
 ## [2026.6.10] - 2026-06-10
 
 Triage of the 2026-06-09 Claude Code Insights report → three Queen/dispatch improvements.

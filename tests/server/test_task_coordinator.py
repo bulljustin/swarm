@@ -187,6 +187,43 @@ class TestSpawnHandoffTask:
         async_mock.assert_awaited_once_with(tasks[0].id, "web", actor="drone:inter-worker-handoff")
 
     @pytest.mark.asyncio
+    async def test_broadcast_fanout_deduped_to_single_task(self, monkeypatch) -> None:
+        """task #647: a broadcast fanned to N idle recipients arrives as N
+        near-identical handoff messages. Without dedup each spawns its own task
+        row (the #638-645 incident — one directive shown as 8 'tasks'). Collapse
+        to a single tracked task; later identical handoffs skip."""
+        d = make_daemon()
+        monkeypatch.setattr(d.tasks_coord, "assign_and_start_task", AsyncMock(return_value=True))
+        monkeypatch.setattr(d, "edit_task", MagicMock())
+        # Same content + sender, different message ids (per-recipient rows).
+        msg_web = SimpleNamespace(
+            sender="realtruth", msg_type="warning", id=638, content="move all work to staging"
+        )
+        msg_hub = SimpleNamespace(
+            sender="realtruth", msg_type="warning", id=639, content="move all work to staging"
+        )
+        r1 = await d.tasks_coord.spawn_handoff_task("web", msg_web)
+        r2 = await d.tasks_coord.spawn_handoff_task("hub", msg_hub)
+        tasks = list(d.task_board.all_tasks)
+        assert len(tasks) == 1  # one broadcast is NOT N tasks
+        assert r1 is True
+        assert r2 is False  # second recipient deduped (still nudged by the watcher)
+
+    @pytest.mark.asyncio
+    async def test_distinct_handoffs_not_deduped(self, monkeypatch) -> None:
+        """Different sender/content → genuinely distinct handoffs, both spawn."""
+        d = make_daemon()
+        monkeypatch.setattr(d.tasks_coord, "assign_and_start_task", AsyncMock(return_value=True))
+        monkeypatch.setattr(d, "edit_task", MagicMock())
+        m1 = SimpleNamespace(sender="api", msg_type="dependency", id=1, content="fix the foo bug")
+        m2 = SimpleNamespace(
+            sender="hub", msg_type="dependency", id=2, content="update the bar API"
+        )
+        await d.tasks_coord.spawn_handoff_task("web", m1)
+        await d.tasks_coord.spawn_handoff_task("platform", m2)
+        assert len(list(d.task_board.all_tasks)) == 2
+
+    @pytest.mark.asyncio
     async def test_no_task_board_returns_false(self) -> None:
         d = make_daemon()
         d.task_board = None

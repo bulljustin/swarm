@@ -2824,6 +2824,17 @@
         body.cc-active #terminal-actions { display: none !important; }
         /* Hide the mobile send bar on dashboard for the same reason. */
         body.cc-active #mobile-send-bar { display: none !important; }
+        /* Panel visibility is driven SOLELY by body.cc-active — one source of
+           truth. Both #command-center and #detail-body render in the markup
+           with no default display:none, so before this rule the correct
+           single-panel view existed only after JS show()/hide() ran. After an
+           os.execv reload, a race in that JS reconciliation could leave BOTH
+           painted (worker terminal in #detail-body + Queen panel in
+           #command-center). Keying visibility off the class makes the
+           mixed-render impossible at the CSS layer, regardless of JS timing. */
+        #command-center { display: none; }
+        body.cc-active #command-center { display: block; }
+        body.cc-active #detail-body { display: none; }
         /* P6: buzz-filter-select is desktop-hidden; only emerges on mobile
            where the chip strip is hidden. JS mirrors selection both ways. */
         .buzz-filter-select-mobile { display: none; }

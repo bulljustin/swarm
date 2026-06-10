@@ -99,6 +99,130 @@ def _auto_relay_to_queen(
     _upsert_attention_thread(d, sender, msg_type, content)
 
 
+def _gate_broadcast(
+    d: SwarmDaemon,
+    sender: str,
+    recipient: str,
+    msg_type: str,
+    content: str,
+    reason: str,
+    matched: str,
+) -> str:
+    """Block a gated mass-broadcast and escalate it to the operator (task #647).
+
+    Enforcement is the caller's deterministic gate; this helper handles the
+    side effects of a block: a buzz-log entry, an operator Attention card, and
+    a fire-and-forget headless-Queen *enrichment* call that summarises
+    provenance / blast-radius for the operator. None of it delivers the
+    message — that's the whole point. Returns the text shown to the SENDER.
+
+    Best-effort throughout: a failure in any side effect must not raise, so the
+    sender always gets a coherent "gated" response.
+    """
+    from swarm.drones.log import LogCategory, SystemAction
+
+    preview = (content or "")[:80].replace("\n", " ")
+    try:
+        d.drone_log.add(
+            SystemAction.BROADCAST_GATED,
+            sender,
+            f"→ {recipient} BLOCKED ({reason}, matched '{matched}'): {preview}",
+            category=LogCategory.MESSAGE,
+        )
+    except Exception:
+        pass
+
+    # Operator Attention card — the gated directive needs a human (or the
+    # Queen) to issue it for real if it is legitimate.
+    try:
+        _upsert_attention_thread(
+            d,
+            sender,
+            "warning",
+            f"[GATED BROADCAST — {reason}] {sender} tried to send to {recipient}: {content}",
+        )
+    except Exception:
+        pass
+
+    _enrich_gated_broadcast_async(d, sender, recipient, reason, matched, content)
+
+    return (
+        f"⛔ Broadcast GATED, not delivered. Reason: {reason} "
+        f'(matched "{matched}").\n\n'
+        "A worker cannot issue a swarm-wide directive or speak for the operator "
+        "— this was routed to the operator for confirmation instead. If this is "
+        'coordination about YOUR OWN concrete change (e.g. "I changed shared '
+        'API X, new shape is Y"), rephrase it that way and resend. If it is a '
+        "policy/directive, let the operator or Queen issue it."
+    )
+
+
+def _enrich_gated_broadcast_async(
+    d: SwarmDaemon,
+    sender: str,
+    recipient: str,
+    reason: str,
+    matched: str,
+    content: str,
+) -> None:
+    """Fire-and-forget headless-Queen analysis of a gated broadcast.
+
+    The deterministic gate already blocked delivery; this adds a provenance /
+    blast-radius summary to the operator's Attention thread. Async because the
+    MCP handler is synchronous and must not block on an LLM call.
+    """
+    queen = getattr(d, "queen", None)
+    ask = getattr(queen, "ask", None)
+    if ask is None:
+        return
+    prompt = (
+        "A worker broadcast was GATED by the deterministic mass-broadcast gate "
+        "(task #647) and was NOT delivered. Analyze it for the operator.\n\n"
+        f"Sender: {sender}\nRecipient: {recipient}\n"
+        f"Gate trigger: {reason} (matched phrase: '{matched}')\n\n"
+        f"Message:\n{content}\n\n"
+        "Assess: (1) provenance — is this the sender's own verifiable work, or "
+        "an unverifiable claim about what the operator or another party said? "
+        "(2) blast radius had it been delivered, (3) reversibility, "
+        "(4) coordination vs command. Strict JSON only: "
+        '{"verdict": "legitimate|hearsay|unclear", '
+        '"summary": "one sentence for the operator", '
+        '"recommend": "deliver|hold|discard"}'
+    )
+
+    async def _run() -> None:
+        try:
+            result = await ask(prompt, stateless=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return
+        if not isinstance(result, dict):
+            return
+        summary = result.get("summary") or result.get("result") or ""
+        verdict = result.get("verdict", "")
+        rec = result.get("recommend", "")
+        if not summary:
+            return
+        try:
+            _upsert_attention_thread(
+                d,
+                sender,
+                "warning",
+                f"[Queen analysis of gated broadcast — {verdict}/{rec}] {summary}",
+            )
+        except Exception:
+            return
+
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(_run())
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+    except RuntimeError:
+        # No event loop (CLI/test) — skip enrichment silently.
+        pass
+
+
 def _upsert_attention_thread(
     d: SwarmDaemon,
     sender: str,

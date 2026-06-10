@@ -10333,10 +10333,9 @@
         // inline grid-template-rows so the CSS default (`1fr auto 1fr`,
         // equal split) takes over. We don't restore prior drag state —
         // it was leaving the bottom panel dominant after worker visits.
-        var cc = el('command-center');
-        var detail = el('detail-body');
-        if (cc) cc.style.display = '';
-        if (detail) detail.style.display = 'none';
+        // Panel visibility is CSS-driven off body.cc-active (added below) —
+        // do NOT set inline display on #command-center / #detail-body here,
+        // or it desyncs from the class and reintroduces the mixed-render bug.
         var bottom = bottomPanel();
         if (bottom) bottom.style.display = '';
         var rh = resizeHandle();
@@ -10405,10 +10404,8 @@
         // Detach the Queen embed first so the shared terminal container
         // is free to move into #detail-body if SHE is the focused worker.
         try { if (window.unmountQueenEmbed) window.unmountQueenEmbed(); } catch (_) {}
-        var cc = el('command-center');
-        var detail = el('detail-body');
-        if (cc) cc.style.display = 'none';
-        if (detail) detail.style.display = '';
+        // Panel visibility is CSS-driven off body.cc-active (removed below) —
+        // do NOT set inline display on #command-center / #detail-body here.
         var bottom = bottomPanel();
         if (bottom) bottom.style.display = 'none';
         var rh = resizeHandle();
@@ -11210,9 +11207,9 @@
             // when they want the CC.
             hide();
         } else {
-            // Hide the empty state by default; Command Center is the landing.
-            var detail = el('detail-body');
-            if (detail) detail.style.display = 'none';
+            // Command Center is the landing. show() adds body.cc-active, which
+            // the CSS keys off to reveal #command-center and hide #detail-body
+            // — no inline display juggling (that's what caused the mixed render).
             show();
         }
 
@@ -11230,8 +11227,8 @@
         attachCcResizeHandles();
 
         setInterval(function () {
-            var cc = el('command-center');
-            if (!cc || cc.style.display === 'none') return;
+            // CC visibility is the body.cc-active class now (not inline display).
+            if (!document.body.classList.contains('cc-active')) return;
             loadDigest();
         }, DIGEST_INTERVAL_MS);
 
