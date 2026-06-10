@@ -10,6 +10,23 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.10.4] - 2026-06-10
+
+### Features
+
+- **Dev-only auto-reload on build change.** When the dev daemon restarts on a
+  changed build, the dashboard tab now reloads itself on WebSocket reconnect
+  instead of silently running stale cached JS/CSS — ending the "hard-refresh
+  after Reload" trap. Keys off `build_sha` (which hashes the source tree, so it
+  changes on committed *and* uncommitted edits) embedded in the page vs.
+  `/api/health` on reconnect. Gated strictly on `is_dev` (`termDebug`): the
+  Reload button and the production auto-update flow (`waitForRestart`) already
+  reload, and production users must never get a surprise reload.
+
+### Changes
+
+### Fixes
+
 ## [2026.6.10.3] - 2026-06-10
 
 ### Features

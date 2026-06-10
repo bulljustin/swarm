@@ -442,6 +442,10 @@
             document.getElementById('ws-dot').classList.add('connected');
             if (wasDisconnected && reconnectDelay > 1000) {
                 showToast('Connection restored');
+                // Dev-only: if the daemon came back on a new build, reload the
+                // page so we don't keep running stale cached assets. No-op in
+                // production (gated on termDebug) and when the build is unchanged.
+                maybeReloadOnBuildChange();
                 // Refresh all panels — WS messages may have been lost during disconnect.
                 // Worker 'state' events are among the lost messages, so the worker
                 // list/status must be re-synced too — otherwise it shows stale state
@@ -510,6 +514,31 @@
         }).finally(function() {
             if (timer) clearTimeout(timer);
         });
+    }
+
+    // DEV-ONLY: auto-reload the page when the daemon comes back on a changed
+    // build. The Reload button and the normal-user auto-update already reload
+    // via waitForRestart(), but a restart triggered any OTHER way (a /ship
+    // reinstall, an external restart) just drops the WS and reconnects here —
+    // leaving the tab on stale cached JS/CSS (the recurring "hard-refresh after
+    // Reload" trap). build_sha hashes the source tree, so it changes on every
+    // restart-with-new-code (committed OR uncommitted). Gated on termDebug
+    // (is_dev): production users have the auto-update flow and we never want a
+    // surprise reload there.
+    function maybeReloadOnBuildChange() {
+        if (!_swarmCfg.termDebug || !_swarmCfg.buildSha) return;
+        // The Reload button / auto-update path (waitForRestart) owns the reload
+        // when it's active — its prefetch-then-reload is gentler on the SW. Defer.
+        if (_restarting) return;
+        fetchJsonNoStore('/api/health?_=' + Date.now(), 800).then(function(data) {
+            var sha = data && data.build_sha;
+            if (!sha || sha === _swarmCfg.buildSha) return;
+            try {
+                sessionStorage.setItem('reload_toast', 'Dev: new build — reloading page');
+            } catch (e) {}
+            if (ws) { try { ws.close(); } catch (e2) {} ws = null; }
+            location.reload();
+        }).catch(function () {});
     }
 
     function handleEvent(data) {
