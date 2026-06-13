@@ -2351,6 +2351,45 @@ def backup() -> None:
 
 
 @db.command()
+@click.argument("backup_file", required=False, type=click.Path(path_type=Path))
+@click.option("--yes", is_flag=True, help="Skip the confirmation prompt")
+def restore(backup_file: Path | None, yes: bool) -> None:
+    """Restore swarm.db from a backup.
+
+    With no argument, restores the newest auto-backup from
+    ~/.swarm/backups/. The replaced database is kept at
+    swarm.db.pre-restore in case the restore was a mistake.
+    """
+    from swarm.db.core import _DEFAULT_DB_PATH, find_latest_backup, restore_backup
+    from swarm.server.runner import _pid_alive, _read_lock_pid
+
+    pid = _read_lock_pid()
+    if pid is not None and _pid_alive(pid):
+        raise click.ClickException(
+            f"Swarm daemon is running (PID {pid}). Stop it first: swarm stop"
+        )
+
+    if backup_file is None:
+        backup_file = find_latest_backup(Path.home() / ".swarm" / "backups")
+        if backup_file is None:
+            raise click.ClickException(
+                "No backups found in ~/.swarm/backups/ — pass a backup file explicitly."
+            )
+
+    if not yes:
+        click.confirm(
+            f"Replace {_DEFAULT_DB_PATH} with {backup_file}?",
+            abort=True,
+        )
+    try:
+        restored = restore_backup(backup_file)
+    except (FileNotFoundError, ValueError) as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(f"Restored: {restored}")
+    click.echo(f"Previous database kept at: {restored.with_suffix('.db.pre-restore')}")
+
+
+@db.command()
 def check() -> None:
     """Run integrity check on swarm.db."""
     from swarm.db.core import SwarmDB

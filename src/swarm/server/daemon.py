@@ -886,7 +886,9 @@ class SwarmDaemon(EventEmitter):
                                 _log.debug("removed old backup %s", f.name)
                         last_backup = time.time()
                     except Exception:
-                        _log.debug("DB backup failed", exc_info=True)
+                        # Data-safety op — operators run WARNING-level logs
+                        # and need to know backups are silently failing.
+                        _log.warning("DB backup failed", exc_info=True)
         except asyncio.CancelledError:
             return
 
@@ -1560,7 +1562,8 @@ class SwarmDaemon(EventEmitter):
         except asyncio.CancelledError:
             return
         except Exception:
-            _log.debug("backup loop error", exc_info=True)
+            # Task-state backups silently failing = data-loss risk on crash.
+            _log.warning("backup loop error", exc_info=True)
 
     def _on_tunnel_state_change(self, state: TunnelState, detail: str) -> None:
         self.publisher.on_tunnel_state_change(state, detail)

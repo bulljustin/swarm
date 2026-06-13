@@ -10,6 +10,27 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.13.2] - 2026-06-13
+
+### Features
+
+- **`swarm db restore` command.** Restores swarm.db from a backup file (or
+  the newest auto-backup in `~/.swarm/backups/` when no argument is given).
+  Verifies the backup passes `PRAGMA integrity_check` before touching the
+  live file, keeps the replaced database at `swarm.db.pre-restore`, removes
+  stale WAL/SHM sidecars, and refuses to run while the daemon holds the
+  lock. Closes the backup loop: daily auto-backups existed since the
+  maintenance loop landed, but recovery still required hand-copying files.
+
+### Changes
+
+- **Backup failures now log at WARNING.** Both the daily DB backup
+  (`_db_maintenance_loop`) and the 30-minute task-state backup
+  (`_backup_loop`) logged failures at DEBUG — invisible at the default
+  operator log level despite being data-safety regressions.
+
+### Fixes
+
 ## [2026.6.13] - 2026-06-13
 
 ### Features

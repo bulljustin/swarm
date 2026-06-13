@@ -607,3 +607,65 @@ class SwarmDB:
             if p.exists():
                 total += p.stat().st_size
         return total
+
+
+# ----------------------------------------------------------------------
+# Backup restore — module-level so the CLI can run it without a live
+# SwarmDB handle on the target (the target file gets replaced).
+# ----------------------------------------------------------------------
+
+
+def find_latest_backup(backup_dir: Path) -> Path | None:
+    """Return the newest ``swarm_*.db`` backup in ``backup_dir``, or None."""
+    try:
+        candidates = sorted(backup_dir.glob("swarm_*.db"), key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return None
+    return candidates[-1] if candidates else None
+
+
+def restore_backup(backup: Path, db_path: Path | None = None) -> Path:
+    """Replace the database file with a verified backup copy.
+
+    The current database is kept at ``<db>.pre-restore`` so a bad restore
+    is itself reversible. WAL/SHM sidecars are removed — they belong to
+    the replaced file and would corrupt the restored one.
+
+    Raises ``FileNotFoundError`` if the backup is missing and
+    ``ValueError`` if it fails SQLite's integrity check.
+    """
+    import shutil
+
+    db_path = db_path or _DEFAULT_DB_PATH
+    if not backup.exists():
+        raise FileNotFoundError(f"backup not found: {backup}")
+
+    # Verify the backup is a healthy SQLite database BEFORE touching the live file.
+    try:
+        conn = sqlite3.connect(f"file:{backup}?mode=ro", uri=True)
+        try:
+            row = conn.execute("PRAGMA integrity_check").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        raise ValueError(f"backup is not a readable SQLite database: {e}") from e
+    if row is None or row[0] != "ok":
+        raise ValueError(f"backup failed integrity check: {row[0] if row else 'no result'}")
+
+    if db_path.exists():
+        pre = db_path.with_suffix(".db.pre-restore")
+        shutil.copy2(db_path, pre)
+        try:
+            os.chmod(str(pre), 0o600)
+        except OSError:
+            pass
+    for suffix in ("-wal", "-shm"):
+        Path(str(db_path) + suffix).unlink(missing_ok=True)
+
+    shutil.copy2(backup, db_path)
+    try:
+        os.chmod(str(db_path), 0o600)
+    except OSError:
+        pass
+    _log.warning("database restored from %s", backup)
+    return db_path
