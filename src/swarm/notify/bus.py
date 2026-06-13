@@ -23,6 +23,8 @@ class EventType(Enum):
     RESOURCE_PRESSURE = "resource_pressure"
     DSTATE_DETECTED = "dstate_detected"
     CONTEXT_PRESSURE = "context_pressure"
+    DAEMON_HEALTH = "daemon_health"
+    TUNNEL_DOWN = "tunnel_down"
 
 
 class Severity(Enum):

@@ -10,6 +10,26 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.13.3] - 2026-06-13
+
+### Features
+
+- **Daemon self-health alerting.** New `health_sweep` background loop
+  (`src/swarm/server/health.py`) checks disk space on the `~/.swarm` volume
+  every 10 minutes (alerts when free space drops below 10% AND 5 GiB) and
+  runs `PRAGMA integrity_check` daily, pushing URGENT notifications through
+  the existing backends. Alerts are sticky per condition — one notification
+  when it trips, re-armed when it clears. New `daemon_health` event type.
+- **Tunnel-down notification.** A Cloudflare tunnel ERROR now fires an
+  URGENT `tunnel_down` notification — previously it only broadcast to open
+  dashboard WebSockets, which is exactly the channel a tunnel-dependent
+  operator just lost. Both new event types are selectable in the config
+  notification matrix (and included in the Crashes preset).
+
+### Changes
+
+### Fixes
+
 ## [2026.6.13.2] - 2026-06-13
 
 ### Features

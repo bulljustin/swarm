@@ -851,9 +851,17 @@ class SwarmDaemon(EventEmitter):
         self.loop_runner.register("backup", self._backup_loop)
         self.loop_runner.register("pipeline_schedule", self._pipeline_schedule_loop)
         self.loop_runner.register("db_maintenance", self._db_maintenance_loop)
+        self.loop_runner.register("health_sweep", self._health_sweep_loop)
         self.loop_runner.register("playbook_consolidation", self._playbook_consolidation_loop)
         self.loop_runner.register("invariant_reconcile", self._invariant_reconcile_loop)
         self.loop_runner.start_all()
+
+    async def _health_sweep_loop(self) -> None:
+        """Disk-space + DB-integrity sweep with URGENT notifications."""
+        from swarm.server.health import HealthSweep
+
+        sweep = HealthSweep(db=self.swarm_db, notify=lambda: self.notification_bus)
+        await sweep.sweep_loop()
 
     async def _db_maintenance_loop(self) -> None:
         """Periodic WAL checkpoint (5 min) and daily backup with rotation."""
@@ -1567,6 +1575,20 @@ class SwarmDaemon(EventEmitter):
 
     def _on_tunnel_state_change(self, state: TunnelState, detail: str) -> None:
         self.publisher.on_tunnel_state_change(state, detail)
+        # The WS broadcast only reaches an open dashboard — an operator who
+        # relies on the tunnel for access loses exactly that when it errors,
+        # so push through the notification backends too.
+        if state == TunnelState.ERROR and self.notification_bus:
+            from swarm.notify.bus import EventType, NotifyEvent, Severity
+
+            self.notification_bus.emit(
+                NotifyEvent(
+                    event_type=EventType.TUNNEL_DOWN,
+                    title="Cloudflare tunnel down",
+                    message=f"Tunnel errored: {detail or 'unknown error'}",
+                    severity=Severity.URGENT,
+                )
+            )
 
     _MAX_BG_TASKS = 100
 
