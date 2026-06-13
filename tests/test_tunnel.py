@@ -258,3 +258,84 @@ def test_marker_round_trip(mgr: TunnelManager) -> None:
     assert TunnelManager.consume_restart_marker() is True
     # Second consume should return False (file deleted)
     assert TunnelManager.consume_restart_marker() is False
+
+
+class TestAutoRestart:
+    """Unexpected cloudflared exit triggers backoff auto-restart."""
+
+    @pytest.mark.asyncio
+    async def test_unexpected_exit_schedules_restart(self):
+        mgr = TunnelManager(port=9090)
+        mock_proc = MagicMock()
+        mock_proc.stderr = None
+        mock_proc.returncode = 1
+        mock_proc.wait = AsyncMock(return_value=1)
+        mgr._process = mock_proc
+        mgr._state = TunnelState.RUNNING
+
+        with patch.object(mgr, "_auto_restart", new_callable=AsyncMock) as auto:
+            await mgr._watch_process()
+            await asyncio.sleep(0)  # let the created task run
+            auto.assert_awaited_once()
+        assert mgr.state == TunnelState.STOPPED
+
+    @pytest.mark.asyncio
+    async def test_auto_restart_retries_then_errors(self):
+        mgr = TunnelManager(port=9090)
+        mgr._state = TunnelState.STOPPED
+        states: list[TunnelState] = []
+        mgr._on_state_change = lambda s, d: states.append(s)
+
+        start_calls = []
+
+        async def failing_start():
+            start_calls.append(1)
+            raise RuntimeError("no cloudflared")
+
+        with (
+            patch.object(mgr, "start", failing_start),
+            patch("swarm.tunnel.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await mgr._auto_restart()
+
+        assert len(start_calls) == 5  # _RESTART_MAX_ATTEMPTS
+        assert mgr.state == TunnelState.ERROR
+        assert states[-1] == TunnelState.ERROR
+
+    @pytest.mark.asyncio
+    async def test_auto_restart_stops_when_operator_intervened(self):
+        mgr = TunnelManager(port=9090)
+        mgr._state = TunnelState.RUNNING  # operator already restarted it
+
+        start_calls = []
+
+        async def tracking_start():
+            start_calls.append(1)
+            return "url"
+
+        with (
+            patch.object(mgr, "start", tracking_start),
+            patch("swarm.tunnel.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await mgr._auto_restart()
+
+        assert start_calls == []  # bailed before restarting
+
+    @pytest.mark.asyncio
+    async def test_auto_restart_success_resets_attempts(self):
+        mgr = TunnelManager(port=9090)
+        mgr._state = TunnelState.STOPPED
+
+        async def ok_start():
+            mgr._state = TunnelState.RUNNING
+            mgr._restart_attempts = 0
+            return "url"
+
+        with (
+            patch.object(mgr, "start", ok_start),
+            patch("swarm.tunnel.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await mgr._auto_restart()
+
+        assert mgr._restart_attempts == 0
+        assert mgr.state == TunnelState.RUNNING

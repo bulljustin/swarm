@@ -15,6 +15,7 @@ from pathlib import Path
 import aiohttp
 
 from swarm.auth._oauth import apply_token_response, parse_token_error
+from swarm.integrations.retry import is_transient_status, retry_transient
 
 _TOKEN_PATH = Path.home() / ".swarm" / "graph_tokens.json"
 _AUTH_BASE = "https://login.microsoftonline.com"
@@ -125,7 +126,7 @@ class GraphTokenManager:
         }
         payload = {"comment": body_html}
 
-        try:
+        async def _do() -> bool:
             async with aiohttp.ClientSession() as sess:
                 async with sess.post(
                     url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=15)
@@ -133,9 +134,14 @@ class GraphTokenManager:
                     if resp.status in (200, 201):
                         _log.info("Draft reply created for message %s", message_id[:30])
                         return True
+                    if is_transient_status(resp.status):
+                        resp.raise_for_status()
                     err = await resp.text()
                     _log.warning("create_reply_draft failed (%s): %s", resp.status, err[:200])
                     return False
+
+        try:
+            return await retry_transient(_do, what="graph create_reply_draft")
         except Exception as exc:
             _log.warning("create_reply_draft exception: %s", exc)
             return False
@@ -177,12 +183,14 @@ class GraphTokenManager:
         if cc:
             payload["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
 
-        try:
+        async def _do() -> dict[str, str] | None:
             async with aiohttp.ClientSession() as sess:
                 async with sess.post(
                     url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=15)
                 ) as resp:
                     if resp.status not in (200, 201):
+                        if is_transient_status(resp.status):
+                            resp.raise_for_status()
                         err = await resp.text()
                         _log.warning("create_draft failed (%s): %s", resp.status, err[:200])
                         return None
@@ -191,6 +199,9 @@ class GraphTokenManager:
                         "id": data.get("id", ""),
                         "web_link": data.get("webLink", ""),
                     }
+
+        try:
+            return await retry_transient(_do, what="graph create_draft")
         except Exception as exc:
             _log.warning("create_draft exception: %s", exc)
             return None

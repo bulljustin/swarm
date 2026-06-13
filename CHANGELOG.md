@@ -10,6 +10,26 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.13.5] - 2026-06-13
+
+### Features
+
+- **Tunnel auto-restart.** An unexpected cloudflared exit now triggers
+  automatic restart with exponential backoff (5s doubling to 80s, 5
+  attempts). Exhausted attempts flip the tunnel to ERROR, which fires the
+  `tunnel_down` notification from 2026.6.13.3. Previously a cloudflared
+  crash silently dropped remote access until the operator noticed.
+- **Transient-failure retry for Jira/Graph side effects.** New
+  `swarm.integrations.retry.retry_transient` helper (3 attempts,
+  exponential backoff on 429/5xx + connection errors/timeouts) applied to
+  the one-shot mutating calls where a single 503 lost state permanently:
+  Jira transition/comment/assign/create-issue and Graph draft creation.
+  Read paths are unchanged — their sync loops already retry by design.
+
+### Changes
+
+### Fixes
+
 ## [2026.6.13.4] - 2026-06-13
 
 ### Features

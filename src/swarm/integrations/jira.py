@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 
 from swarm.config import JiraConfig
+from swarm.integrations.retry import is_transient_status, retry_transient
 from swarm.logging import get_logger
 from swarm.tasks.task import SwarmTask, TaskPriority, TaskStatus, TaskType
 
@@ -223,19 +224,30 @@ class JiraClient:
         return data.get("transitions", [])
 
     async def transition_issue(self, issue_key: str, transition_id: str) -> bool:
-        """Transition an issue to a new status."""
+        """Transition an issue to a new status. Retries transient failures —
+        a lost transition leaves Swarm and Jira permanently out of sync."""
         session = await self._ensure_session()
         url = f"{self._base_url}/rest/api/3/issue/{issue_key}/transitions"
         payload = {"transition": {"id": transition_id}}
-        async with session.post(url, json=payload) as resp:
-            if resp.status == 204:
-                return True
-            _log.warning(
-                "transition %s to %s failed: %d",
-                issue_key,
-                transition_id,
-                resp.status,
-            )
+
+        async def _do() -> bool:
+            async with session.post(url, json=payload) as resp:
+                if resp.status == 204:
+                    return True
+                if is_transient_status(resp.status):
+                    resp.raise_for_status()
+                _log.warning(
+                    "transition %s to %s failed: %d",
+                    issue_key,
+                    transition_id,
+                    resp.status,
+                )
+                return False
+
+        try:
+            return await retry_transient(_do, what=f"jira transition {issue_key}")
+        except (aiohttp.ClientError, TimeoutError):
+            _log.warning("transition %s failed after retries", issue_key, exc_info=True)
             return False
 
     async def add_comment(self, issue_key: str, body: str) -> bool:
@@ -254,14 +266,24 @@ class JiraClient:
                 ],
             }
         }
-        async with session.post(url, json=payload) as resp:
-            if resp.status in (200, 201):
-                return True
-            _log.warning(
-                "comment on %s failed: %d",
-                issue_key,
-                resp.status,
-            )
+
+        async def _do() -> bool:
+            async with session.post(url, json=payload) as resp:
+                if resp.status in (200, 201):
+                    return True
+                if is_transient_status(resp.status):
+                    resp.raise_for_status()
+                _log.warning(
+                    "comment on %s failed: %d",
+                    issue_key,
+                    resp.status,
+                )
+                return False
+
+        try:
+            return await retry_transient(_do, what=f"jira comment {issue_key}")
+        except (aiohttp.ClientError, TimeoutError):
+            _log.warning("comment on %s failed after retries", issue_key, exc_info=True)
             return False
 
     async def get_myself(self) -> dict[str, Any]:
@@ -276,15 +298,25 @@ class JiraClient:
         """Assign a Jira issue to a user by accountId."""
         session = await self._ensure_session()
         url = f"{self._base_url}/rest/api/3/issue/{issue_key}/assignee"
-        async with session.put(url, json={"accountId": account_id}) as resp:
-            if resp.status == 204:
-                return True
-            _log.warning(
-                "assign %s to %s failed: %d",
-                issue_key,
-                account_id,
-                resp.status,
-            )
+
+        async def _do() -> bool:
+            async with session.put(url, json={"accountId": account_id}) as resp:
+                if resp.status == 204:
+                    return True
+                if is_transient_status(resp.status):
+                    resp.raise_for_status()
+                _log.warning(
+                    "assign %s to %s failed: %d",
+                    issue_key,
+                    account_id,
+                    resp.status,
+                )
+                return False
+
+        try:
+            return await retry_transient(_do, what=f"jira assign {issue_key}")
+        except (aiohttp.ClientError, TimeoutError):
+            _log.warning("assign %s failed after retries", issue_key, exc_info=True)
             return False
 
     async def create_issue(
@@ -317,9 +349,13 @@ class JiraClient:
                     }
                 ],
             }
-        async with session.post(url, json=payload) as resp:
-            resp.raise_for_status()
-            return await resp.json()
+
+        async def _do() -> dict[str, Any]:
+            async with session.post(url, json=payload) as resp:
+                resp.raise_for_status()
+                return await resp.json()
+
+        return await retry_transient(_do, what=f"jira create issue in {project}")
 
 
 class JiraSyncService:

@@ -16,6 +16,10 @@ _log = get_logger("tunnel")
 _URL_WAIT_TIMEOUT = 30.0  # seconds
 _STOP_TIMEOUT = 5.0  # seconds
 
+# Auto-restart after an unexpected cloudflared exit: 5s, 10s, 20s, 40s, 80s.
+_RESTART_BACKOFF_BASE = 5.0
+_RESTART_MAX_ATTEMPTS = 5
+
 _RESTART_MARKER = Path.home() / ".swarm" / "tunnel-restart"
 
 _URL_RE = re.compile(r"https://[a-zA-Z0-9_-]+\.trycloudflare\.com")
@@ -43,6 +47,8 @@ class TunnelManager:
         self._url: str = ""
         self._error: str = ""
         self._reader_task: asyncio.Task[None] | None = None
+        self._restart_task: asyncio.Task[None] | None = None
+        self._restart_attempts = 0
 
     @property
     def state(self) -> TunnelState:
@@ -105,6 +111,7 @@ class TunnelManager:
             raise RuntimeError(msg)
 
         self._url = url
+        self._restart_attempts = 0
         self._set_state(TunnelState.RUNNING, url)
         _log.info("tunnel running: %s", url)
 
@@ -172,11 +179,52 @@ class TunnelManager:
                 self._state = TunnelState.STOPPED
                 self._url = ""
                 self._set_state(TunnelState.STOPPED)
+                # Auto-restart with backoff — a transient cloudflared crash
+                # shouldn't permanently drop remote access. Intentional
+                # stop() cancels this watcher before terminating, so the
+                # restart only fires for genuine crashes.
+                self._restart_task = asyncio.create_task(self._auto_restart())
+        except asyncio.CancelledError:
+            return
+
+    async def _auto_restart(self) -> None:
+        """Retry start() with exponential backoff after an unexpected exit.
+
+        Gives up after ``_RESTART_MAX_ATTEMPTS`` and flips to ERROR, which
+        also fires the ``tunnel_down`` notification via the daemon's
+        state-change hook.
+        """
+        try:
+            while self._restart_attempts < _RESTART_MAX_ATTEMPTS:
+                delay = _RESTART_BACKOFF_BASE * 2**self._restart_attempts
+                self._restart_attempts += 1
+                _log.warning(
+                    "tunnel auto-restart %d/%d in %.0fs",
+                    self._restart_attempts,
+                    _RESTART_MAX_ATTEMPTS,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                if self._state != TunnelState.STOPPED:
+                    return  # operator intervened (manual start or shutdown)
+                try:
+                    await self.start()
+                    self._restart_attempts = 0
+                    return
+                except RuntimeError:
+                    continue
+            self._error = f"auto-restart gave up after {_RESTART_MAX_ATTEMPTS} attempts"
+            _log.error("tunnel %s", self._error)
+            self._set_state(TunnelState.ERROR, self._error)
         except asyncio.CancelledError:
             return
 
     async def stop(self) -> None:
         """Stop the cloudflared tunnel."""
+        if self._restart_task and not self._restart_task.done():
+            self._restart_task.cancel()
+            self._restart_task = None
+        self._restart_attempts = 0
         if self._reader_task and not self._reader_task.done():
             self._reader_task.cancel()
             self._reader_task = None
