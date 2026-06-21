@@ -481,6 +481,18 @@
                     <button class="btn btn-sm btn-secondary" data-action="msgLoadMore">Load more</button>
                 </div>
             </div>
+            <!-- Message detail modal — full content + (for broadcasts) recipients (B10) -->
+            <div id="msg-detail-modal" class="modal-overlay" style="display:none" data-modal-dismiss="msgHideDetail">
+                <div class="modal-box modal-lg" role="dialog" aria-modal="true">
+                    <div class="panel-header">
+                        <span id="msg-detail-title">Message</span>
+                        <button class="btn btn-sm btn-secondary" data-action="msgHideDetail">Close</button>
+                    </div>
+                    <div class="modal-padding modal-body-scroll" id="msg-detail-body">
+                        <div class="empty-state">Loading…</div>
+                    </div>
+                </div>
+            </div>
             <!-- Activity — unified swarm event log (renamed from Buzz Log in Ship A.5) -->
             <div class="tab-content" id="tab-buzz" role="tabpanel" aria-labelledby="tab-buzz-btn">
                 <div class="filter-bar" id="buzz-filters">

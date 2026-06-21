@@ -166,7 +166,8 @@
         qhReopenSend: function() { qhReopenSend(); },
         qhViewInCC: function() { qhViewInCC(); },
         msgLoadMore: function() { msgLoadMore(); },
-        msgToggleGroup: function(el) { msgToggleGroup(el.dataset.msgGroup); },
+        msgOpenDetail: function(el) { msgOpenDetail(el.dataset.msgGroup); },
+        msgHideDetail: function() { msgHideDetail(); },
         msgToggleCompose: function() { msgToggleCompose(); },
         msgSendCompose: function() { msgSendCompose(); },
         msgToggleSelect: function() { msgToggleSelect(); },
@@ -5684,6 +5685,8 @@
 
     function _msgRow(g, idx) {
         var cls = _MSG_TYPE_CLASS[g.type] || 'text-muted';
+        // Content is truncated in the list (CSS ellipsis); the full text is
+        // shown in the click-through detail modal.
         var content = '<span class="msg-content">' + escapeHtml(g.content) + '</span>';
         var time = '<span class="local-time text-muted text-xs" data-ts="' + g.created_at + '"></span>';
         var typeBadge = '<span class="msg-type ' + cls + '">' + escapeHtml(g.type) + '</span>';
@@ -5691,38 +5694,59 @@
         var checked = g.members.every(function(m) { return _msgSelectedIds[m.id]; }) ? ' checked' : '';
         var cb = '<input type="checkbox" class="msg-select-cb" data-msg-ids="' + ids + '"'
             + checked + ' style="display:' + (_msgSelectMode ? 'inline' : 'none') + '">';
+        var route, tail;
         if (g.members.length > 1) {
             var readN = g.members.filter(function(m) { return m.read_at; }).length;
-            var sub = g.members.map(function(m) {
-                return '<div class="msg-sub"><span class="text-xs text-muted">'
-                    + escapeHtml(m.to) + '</span> <span class="msg-dot '
-                    + (m.read_at ? 'msg-read' : 'msg-unread') + '"></span></div>';
-            }).join('');
-            return '<div class="msg-row msg-group" data-action="msgToggleGroup" data-msg-group="'
-                + idx + '" role="button" tabindex="0">'
-                + cb + typeBadge
-                + '<span class="msg-route text-xs text-muted">' + escapeHtml(g.from) + ' → * ('
-                + g.members.length + ')</span>'
-                + content + time
-                + '<span class="text-xs text-muted">' + readN + '/' + g.members.length + ' read</span>'
-                + '</div>'
-                + '<div class="msg-group-detail" id="msg-group-' + idx + '" style="display:none">'
-                + sub + '</div>';
+            route = escapeHtml(g.from) + ' → * (' + g.members.length + ')';
+            tail = '<span class="text-xs text-muted">' + readN + '/' + g.members.length + ' read</span>';
+        } else {
+            var m = g.members[0];
+            route = escapeHtml(m.from) + ' → ' + escapeHtml(m.to);
+            tail = '<span class="msg-dot ' + (m.read_at ? 'msg-read' : 'msg-unread') + '" title="'
+                + (m.read_at ? 'read' : 'unread') + '"></span>';
         }
-        var m = g.members[0];
-        return '<div class="msg-row">'
+        return '<div class="msg-row" data-action="msgOpenDetail" data-msg-group="' + idx
+            + '" role="button" tabindex="0">'
             + cb + typeBadge
-            + '<span class="msg-route text-xs text-muted">' + escapeHtml(m.from) + ' → '
-            + escapeHtml(m.to) + '</span>'
-            + content + time
-            + '<span class="msg-dot ' + (m.read_at ? 'msg-read' : 'msg-unread') + '" title="'
-            + (m.read_at ? 'read' : 'unread') + '"></span>'
+            + '<span class="msg-route text-xs text-muted">' + route + '</span>'
+            + content + time + tail
             + '</div>';
     }
 
-    function msgToggleGroup(idx) {
-        var el = document.getElementById('msg-group-' + idx);
-        if (el) el.style.display = (el.style.display === 'none') ? 'block' : 'none';
+    function msgOpenDetail(idx) {
+        var g = _msgGroups[idx];
+        if (!g) return;
+        var modal = document.getElementById('msg-detail-modal');
+        var body = document.getElementById('msg-detail-body');
+        var title = document.getElementById('msg-detail-title');
+        if (!modal || !body) return;
+        var cls = _MSG_TYPE_CLASS[g.type] || 'text-muted';
+        var route = (g.members.length > 1)
+            ? (escapeHtml(g.from) + ' → * (' + g.members.length + ' recipients)')
+            : (escapeHtml(g.from) + ' → ' + escapeHtml(g.members[0].to));
+        if (title) title.textContent = g.type + ' message';
+        var parts = [
+            '<div class="text-sm text-muted mb-sm"><span class="msg-type ' + cls + '">'
+            + escapeHtml(g.type) + '</span> ' + route
+            + ' <span class="local-time" data-ts="' + g.created_at + '"></span></div>',
+            '<div class="qh-msg-content">' + escapeHtml(g.content) + '</div>',
+        ];
+        if (g.members.length > 1) {
+            parts.push('<div class="text-sm text-muted mt-md mb-sm">Recipients:</div>');
+            g.members.forEach(function(m) {
+                parts.push('<div class="msg-sub"><span class="text-xs">' + escapeHtml(m.to)
+                    + '</span> <span class="msg-dot ' + (m.read_at ? 'msg-read' : 'msg-unread')
+                    + '" title="' + (m.read_at ? 'read' : 'unread') + '"></span></div>');
+            });
+        }
+        body.innerHTML = parts.join('');
+        formatLocalTimes(body);
+        modal.style.display = 'flex';
+    }
+
+    function msgHideDetail() {
+        var modal = document.getElementById('msg-detail-modal');
+        if (modal) modal.style.display = 'none';
     }
 
     function msgSearchChanged(val) {

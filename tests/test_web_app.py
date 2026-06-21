@@ -1025,5 +1025,8 @@ def test_dashboard_template_renders_queen_history_tab():
         'id="msg-bulk-actions"',
         'data-action="msgBulkDelete"',
         'data-action="msgToggleSelect"',
+        # B10 message detail modal (click-through to full content)
+        'id="msg-detail-modal"',
+        'data-action="msgHideDetail"',
     ):
         assert marker in html, f"missing dashboard tab marker: {marker}"

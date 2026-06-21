@@ -10,6 +10,22 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.21] - 2026-06-21
+
+### Features
+
+### Changes
+
+- **Messages tab rows are now clickable to a detail modal.** Message
+  content is truncated in the list, but messages are often long — so a row
+  click now opens a read-only detail modal with the full content, type,
+  route, and timestamp (and, for a collapsed broadcast, the per-recipient
+  read state). This replaces the previous broadcast-only inline expand and
+  makes the Messages tab consistent with the Queen history tab's
+  click-to-detail behavior. (Operator feedback on B10.)
+
+### Fixes
+
 ## [2026.6.20.8] - 2026-06-20
 
 ### Features
