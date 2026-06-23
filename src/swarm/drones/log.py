@@ -88,6 +88,10 @@ class SystemAction(Enum):
     TASK_FAILED = "TASK_FAILED"
     TASK_REMOVED = "TASK_REMOVED"
     TASK_SEND_FAILED = "TASK_SEND_FAILED"
+    # #762: a task crossed its per-task output-token ceiling. The governor
+    # escalates (notification) and parks the task (ACTIVE → BLOCKED) so it
+    # stops burning and awaits operator attention.
+    TASK_OVER_TOKEN_BUDGET = "TASK_OVER_TOKEN_BUDGET"
     # #405: an auto-repair by the task-lifecycle invariant reconciler
     # (INV-1/2/3 / operator-action). One entry per repaired record.
     TASK_RECONCILED = "TASK_RECONCILED"

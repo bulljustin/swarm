@@ -94,6 +94,7 @@ def _watcher(
     rate_limit_check=None,
     sender: _Sender | None = None,
     worker_busy_check=None,
+    loop_armed_check=None,
 ) -> tuple[IdleWatcher, _Sender, MagicMock]:
     sender = sender if sender is not None else _Sender()
     drone_log = MagicMock()
@@ -108,6 +109,7 @@ def _watcher(
         send_to_worker=sender,
         rate_limit_check=rate_limit_check,
         worker_busy_check=worker_busy_check,
+        loop_armed_check=loop_armed_check,
     )
     return w, sender, drone_log
 
@@ -266,6 +268,57 @@ async def test_busy_check_exception_does_not_suppress_or_crash() -> None:
     watcher, sender, _ = _watcher(board=board, worker_busy_check=_boom)
 
     sent = await watcher.sweep([_worker("alpha", WorkerState.RESTING)], now=1000.0)
+
+    assert sent == 1
+
+
+# ---------------------------------------------------------------------------
+# Native /loop coexistence guard (task #761)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_loop_armed_worker_is_not_nudged() -> None:
+    """A worker parked between native /loop fires is left alone, skip audited."""
+    from swarm.drones.log import SystemAction
+
+    board = _board({"loopy": [_task(761, "t-761")]})
+    # Armed: 200s until the next loop tick.
+    watcher, sender, drone_log = _watcher(board=board, loop_armed_check=lambda _n: 200.0)
+
+    sent = await watcher.sweep([_worker("loopy", WorkerState.RESTING)], now=1000.0)
+
+    assert sent == 0
+    assert sender.calls == []
+    skip_call = _skip_call(drone_log, SystemAction.AUTO_NUDGE_SKIPPED)
+    assert skip_call is not None
+    assert skip_call.args[1] == "loopy"
+    assert "/loop" in skip_call.args[2]
+
+
+@pytest.mark.asyncio
+async def test_worker_past_loop_window_is_nudged() -> None:
+    """Once the loop window has lapsed (check returns None), normal nudge resumes."""
+    board = _board({"loopy": [_task(761, "t-761")]})
+    watcher, sender, _ = _watcher(board=board, loop_armed_check=lambda _n: None)
+
+    sent = await watcher.sweep([_worker("loopy", WorkerState.RESTING)], now=1000.0)
+
+    assert sent == 1
+    assert sender.calls[0][0] == "loopy"
+
+
+@pytest.mark.asyncio
+async def test_loop_armed_check_exception_does_not_suppress_or_crash() -> None:
+    """A raising loop check is treated as 'not armed' — nudge still fires."""
+
+    def _boom(_n: str) -> float | None:
+        raise RuntimeError("tracker lookup failed")
+
+    board = _board({"loopy": [_task(761, "t-761")]})
+    watcher, sender, _ = _watcher(board=board, loop_armed_check=_boom)
+
+    sent = await watcher.sweep([_worker("loopy", WorkerState.RESTING)], now=1000.0)
 
     assert sent == 1
 

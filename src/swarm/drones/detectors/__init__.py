@@ -20,6 +20,7 @@ from swarm.drones.detectors.context_files import ContextFileTracker
 from swarm.drones.detectors.context_pressure_check import ContextPressureCheck
 from swarm.drones.detectors.context_recovery import ContextRecoveryDetector
 from swarm.drones.detectors.diminishing_returns import DiminishingReturnsDetector
+from swarm.drones.detectors.loop import LoopDetector
 from swarm.drones.detectors.rate_limit import RateLimitDetector
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "ContextPressureCheck",
     "ContextRecoveryDetector",
     "DiminishingReturnsDetector",
+    "LoopDetector",
     "RateLimitDetector",
     "WorkerHealthDetectors",
 ]
@@ -46,3 +48,4 @@ class WorkerHealthDetectors:
     rate_limit: RateLimitDetector
     recovery: ContextRecoveryDetector
     pressure: ContextPressureCheck
+    loop: LoopDetector

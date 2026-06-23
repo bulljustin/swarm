@@ -21,6 +21,7 @@ from swarm.drones.detectors import (
     ContextPressureCheck,
     ContextRecoveryDetector,
     DiminishingReturnsDetector,
+    LoopDetector,
     RateLimitDetector,
     WorkerHealthDetectors,
 )
@@ -74,6 +75,7 @@ def _make_tracker(
             decision_executor=decision_executor,
             drone_config=drone_config or DroneConfig(),
         ),
+        loop=LoopDetector(),
     )
     tracker = WorkerStateTracker(
         workers=workers,

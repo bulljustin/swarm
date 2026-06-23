@@ -376,6 +376,69 @@ turn. No special handling is needed — the existing `rate_limit` detector
 (`providers/claude.py` `_RE_RATE_LIMIT`, wired in `state_tracker`) already
 catches Claude's rate-limit banners regardless of what produced them.
 
+### Native `/loop` coexistence (task #761)
+
+Claude Code's native **`/loop`** (June 2026) re-runs a worker on a cadence.
+Unlike a dynamic workflow, a loop *between* fires is **genuinely idle** — it
+self-scheduled its next tick and parked at the prompt — so there is **no
+persistent footer indicator** to scrape, and reporting `BUZZING` would lie to
+the dashboard and confuse the stuck-BUZZING safety nets. A parked loop must
+still not be nudged or assigned over: it isn't free, it's waiting to resume
+its own loop. Full design: `docs/specs/native-loop-functions.md` §2.
+
+The reliable signal is the **ScheduleWakeup tool result** the harness prints
+when the worker parks — `Next wakeup scheduled for <time> (in Ns)` — verified
+against the binary (v2.1.186), matched by `_RE_LOOP_WAKEUP` (`providers/claude.py`).
+The captured `(in Ns)` is the exact dwell, so the window is **precise rather
+than a fixed guess**. A stateful **`LoopDetector`** (`drones/detectors/loop.py`,
+mirroring `RateLimitDetector`) holds a per-worker no-disturb deadline
+(`dwell + native_loop_grace_seconds`); the worker stays **`RESTING`** and the
+deadline is consulted as a dispatch-protection guard — the `IdleWatcher`
+(`_suppression_reason`, logged as `AUTO_NUDGE_SKIPPED`) and the speculation
+pre-load (`poll_dispatcher`) both skip an armed worker. Provider-gated by
+construction: the base provider's `supports_native_loop` returns `False`, and
+non-Claude providers never emit the signal anyway. Gated by
+`DroneConfig.native_loop_coexistence_enabled` (default `True`).
+
+**Known limitation:** the detector sees only loops whose ScheduleWakeup line
+appears in the PTY tail — i.e. **dynamic-pacing** loops (native `/loop` dynamic
+mode and the autonomous-loop runtime). A **fixed-cadence (cron) `/loop`** does
+not emit that line and is **not yet covered** — a documented follow-up. This
+also means a loop an operator types directly into a worker PTY *is* covered as
+long as it's dynamic-paced (the signal is the worker's, not Swarm's), but a
+cron one is not.
+
+### Per-task token-budget governor (task #762)
+
+The "non-negotiable budget ceiling" stopping condition for autonomous loops
+(max-iteration via `native_goal_max_turns` and no-progress via the nudge guards
+already exist). On a **subscription** the meter is the rate limit, not dollars,
+so the governor counts **output tokens**, not cost.
+
+`daemon._enforce_task_token_ceiling()` runs each `_usage_refresh_loop` cycle
+(right after `_accumulate_task_costs`). It charges each worker's output-token
+**delta** — measured from `worker.usage.output_tokens` (sourced from Claude Code
+session JSONL via `worker/usage.py`, **not** PTY scraping) against
+`_prev_worker_output_tokens` — to its single **ACTIVE** task's runtime-only
+`SwarmTask.tokens_spent`. The baseline is seeded on first sighting so a daemon
+restart **never retro-charges** a task. When `tokens_spent` crosses
+`DroneConfig.task_token_ceiling` the governor fires **once** (one-shot
+`_token_ceiling_breached` guard): logs a `TASK_OVER_TOKEN_BUDGET` operator
+notification and **parks** the task `ACTIVE → BLOCKED` via
+`board.block_for_operator` — which every churn loop skips and which is not
+auto-redispatchable, so it stops burning and awaits the operator. The PTY is
+**not** interrupted (escalate-and-park, not hard-stop): the current turn
+finishes; BLOCKED only blocks the *next* dispatch / self-loop pickup. Recover by
+the normal operator unpark (BLOCKED → ACTIVE re-dispatch).
+
+`task_token_ceiling` defaults to **0 (disabled)** — a safe rollout; set a
+generous value (a true runaway burns far more output than a normal task — see
+cross-project #523 at ~257K output tokens) to catch runaways without parking
+legitimate work. `tokens_spent` is **ephemeral** (not persisted → no DB
+migration); it resets on restart alongside the delta baseline. The **per-loop
+daily aggregate cap** (spec §3.4, for standing loops) is a separate later layer
+built on top of this per-task foundation, landing with #765.
+
 ### PTY Integration
 - Output read from in-process ring buffer via `worker.process.get_content()`
 - Input sent via `worker.process.send_keys()` / `send_enter()` / `send_interrupt()`

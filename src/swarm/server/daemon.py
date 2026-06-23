@@ -126,6 +126,11 @@ class SwarmDaemon(EventEmitter):
         self.workers: list[Worker] = []
         self.pool: WorkerProcessProvider | None = None
         self._prev_worker_costs: dict[str, float] = {}
+        # #762 token-budget governor: previous cumulative OUTPUT-token count
+        # per worker, so each refresh attributes the delta to that worker's
+        # ACTIVE task. Reset (empty) on restart — the first refresh re-seeds
+        # the baseline, so a restart never retro-charges a task.
+        self._prev_worker_output_tokens: dict[str, int] = {}
         # File lock registry: path → (worker_name, timestamp)
         self.file_locks: dict[str, tuple[str, float]] = {}
         self._file_lock_ttl: float = 60.0  # seconds
@@ -1229,6 +1234,8 @@ class SwarmDaemon(EventEmitter):
                     self._broadcast_usage()
                 # Accumulate cost against assigned tasks
                 self._accumulate_task_costs()
+                # #762: enforce the per-task output-token ceiling
+                self._enforce_task_token_ceiling()
                 # Expire stale file locks
                 self._cleanup_file_locks()
                 # Check context pressure thresholds
@@ -1301,6 +1308,67 @@ class SwarmDaemon(EventEmitter):
                     f" (${task.cost_spent:.2f}/${task.cost_budget:.2f})",
                     category=LogCategory.DRONE,
                 )
+
+    def _enforce_task_token_ceiling(self) -> None:
+        """#762: park a task that crosses the per-task output-token ceiling.
+
+        Mirrors :meth:`_accumulate_task_costs`' per-worker delta attribution
+        but for OUTPUT tokens, and ACTS on breach (escalate + park) rather
+        than only logging. Each refresh charges the worker's output-token
+        delta to its single ACTIVE task; once a task's cumulative
+        ``tokens_spent`` reaches ``DroneConfig.task_token_ceiling`` the
+        governor logs an operator notification and parks the task
+        (ACTIVE → BLOCKED via :meth:`TaskBoard.block_for_operator`) so it
+        stops being re-dispatched and awaits the operator.
+
+        The PTY is deliberately NOT interrupted — the worker's current turn
+        finishes (the chosen "escalate + park, don't hard-stop" posture);
+        BLOCKED only prevents the next dispatch / self-loop pickup. ``0``
+        ceiling = disabled, but the delta baselines are still tracked so
+        enabling mid-run never retro-charges a task with a huge first delta.
+        """
+        if not self.task_board:
+            return
+        ceiling = self.config.drones.task_token_ceiling
+        # The governor only acts on the worker's single ACTIVE task.
+        active_by_worker: dict[str, SwarmTask] = {}
+        for task in self.task_board.all_tasks:
+            if task.assigned_worker and task.status == TaskStatus.ACTIVE:
+                active_by_worker.setdefault(task.assigned_worker, task)
+        for w in self.workers:
+            current = w.usage.output_tokens
+            prev = self._prev_worker_output_tokens.get(w.name)
+            self._prev_worker_output_tokens[w.name] = current
+            # First sighting (or post-restart) seeds the baseline only —
+            # never charge a delta against an unknown prior count.
+            if prev is None:
+                continue
+            delta = current - prev
+            if delta <= 0:
+                continue
+            task = active_by_worker.get(w.name)
+            if task is None:
+                continue
+            task.tokens_spent += delta
+            if ceiling <= 0 or task._token_ceiling_breached:
+                continue
+            if task.tokens_spent < ceiling:
+                continue
+            # Breach — escalate (notification the operator sees) + park once.
+            task._token_ceiling_breached = True
+            self.drone_log.add(
+                SystemAction.TASK_OVER_TOKEN_BUDGET,
+                w.name,
+                f"task #{task.number} over token ceiling "
+                f"({task.tokens_spent:,}/{ceiling:,} output tokens) — parked (BLOCKED)",
+                category=LogCategory.TASK,
+                is_notification=True,
+                metadata={"task_id": task.id, "task_number": task.number},
+            )
+            self.task_board.block_for_operator(
+                task.id,
+                f"#762 token ceiling: {task.tokens_spent:,}/{ceiling:,} output tokens",
+            )
 
     def _consolidate_learnings(self, task: SwarmTask) -> None:
         """Capture worker's recent output as task learnings (delegates)."""

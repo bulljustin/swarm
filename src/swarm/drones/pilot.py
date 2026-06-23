@@ -15,6 +15,7 @@ from swarm.drones.detectors import (
     ContextPressureCheck,
     ContextRecoveryDetector,
     DiminishingReturnsDetector,
+    LoopDetector,
     RateLimitDetector,
     WorkerHealthDetectors,
 )
@@ -271,6 +272,9 @@ class DronePilot(EventEmitter):
                 decision_executor=self._decision_exec,
                 drone_config=self.drone_config,
             ),
+            loop=LoopDetector(
+                grace_seconds=self.drone_config.native_loop_grace_seconds,
+            ),
         )
         self._state_tracker = WorkerStateTracker(
             workers=self.workers,
@@ -314,6 +318,7 @@ class DronePilot(EventEmitter):
             task_board=self._task_board,
             drone_log=self.log,
             send_to_worker=_noop_sender,
+            loop_armed_check=self._loop_armed_remaining,
         )
         self._idle_watcher_last_tick: int = 0
         # Inter-worker message watcher (task #235 Phase 3). Same null-
@@ -444,6 +449,18 @@ class DronePilot(EventEmitter):
         if tracker is None:
             return False
         return tracker.worker_has_active_turn(worker)
+
+    def _loop_armed_remaining(self, name: str) -> float | None:
+        """Seconds a worker is parked between native ``/loop`` fires, or None.
+
+        Reads the :class:`LoopDetector` window so the idle-watcher and
+        speculative dispatch leave a loop-armed worker undisturbed until
+        its next tick (task #761). Defensive — no tracker yet ⇒ not armed.
+        """
+        tracker = getattr(self, "_state_tracker", None)
+        if tracker is None:
+            return None
+        return tracker._detectors.loop.armed_remaining(name)
 
     def _build_context(self, **kwargs: object) -> str:
         """Build hive context string via the injected context_builder."""
@@ -587,6 +604,7 @@ class DronePilot(EventEmitter):
             daemon_start_time=daemon_start_time,
             escalate_to_operator=escalate_to_operator,
             worker_busy_check=self._worker_busy,
+            loop_armed_check=self._loop_armed_remaining,
         )
         self.inter_worker_watcher = InterWorkerMessageWatcher(
             drone_config=self._drone_config,

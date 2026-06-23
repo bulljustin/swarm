@@ -325,6 +325,11 @@ class PollDispatcher:
             rl_time = p._state_tracker._detectors.rate_limit.last_seen(worker.name)
             if rl_time and (time.time() - rl_time) < 300:
                 continue
+            # Guard: skip a worker parked between native /loop fires (task
+            # #761). It reads RESTING but is waiting to resume its own loop —
+            # preloading task context over it would disturb that.
+            if p._state_tracker._detectors.loop.is_armed(worker.name):
+                continue
             # Guard: only speculate tasks targeted at this specific worker
             pending = [
                 t

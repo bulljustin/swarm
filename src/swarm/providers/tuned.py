@@ -148,6 +148,12 @@ class TunedProvider(LLMProvider):
         return self._inner.supports_native_goal
 
     @property
+    def supports_native_loop(self) -> bool:
+        # Delegate: a tuned Claude would otherwise silently lose the
+        # /loop-coexistence guard.
+        return self._inner.supports_native_loop
+
+    @property
     def supports_resume(self) -> bool:
         return self._inner.supports_resume
 

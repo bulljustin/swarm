@@ -130,6 +130,29 @@ _RE_WORKFLOW_ACTIVE = re.compile(
     r"|running\s+dynamic\s+workflow\b",
     re.IGNORECASE,
 )
+# Native ``/loop`` (Claude Code, June 2026) re-runs a worker on a cadence.
+# Between fires there is NO persistent footer indicator — unlike a dynamic
+# workflow, a parked loop sits at an ordinary idle prompt, so a footer scrape
+# can't distinguish "loop-armed, waiting for next tick" from "genuinely free".
+# The reliable signal is the ScheduleWakeup *tool result* the harness prints
+# into the transcript when the worker self-schedules its next tick and parks:
+#
+#   "Next wakeup scheduled for <time> (in 270s). Nothing more to do this turn
+#    — the harness re-invokes you when the wakeup fires or a task-notification
+#    arrives."
+#
+# (Verified against the installed Claude Code binary, v2.1.186.) The captured
+# ``(in Ns)`` is the exact dwell before the worker resumes itself — Swarm uses
+# it to compute a precise no-disturb window (see ``LoopDetector``) so the idle-
+# watcher and speculative dispatch leave the worker alone until it re-wakes.
+# This fires for any ScheduleWakeup-paced loop (native ``/loop`` dynamic mode
+# and the autonomous-loop runtime), which is exactly the parked-idle case we
+# must not disturb. Fixed-cadence (cron) ``/loop`` tasks are a follow-up — they
+# don't emit this line.
+_RE_LOOP_WAKEUP = re.compile(
+    r"Next wakeup scheduled for .+?\(in (\d+)s\)",
+    re.IGNORECASE,
+)
 _RE_PLAN_MARKERS = re.compile(
     r"plan file|plan saved|"
     r"proceed with (?:this|the) plan|"
@@ -387,6 +410,13 @@ class ClaudeProvider(LLMProvider):
     @property
     def supports_native_goal(self) -> bool:
         # Native /goal shipped in Claude Code v2.1.139.
+        return True
+
+    @property
+    def supports_native_loop(self) -> bool:
+        # Native /loop shipped in Claude Code (June 2026). Enables the
+        # loop-coexistence guard: a worker parked between /loop fires is
+        # left undisturbed (see ``_RE_LOOP_WAKEUP`` / ``LoopDetector``).
         return True
 
     @property

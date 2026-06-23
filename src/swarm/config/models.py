@@ -164,6 +164,27 @@ class DroneConfig:
     # into the condition string ("...or stop after N turns...").
     native_goal_enabled: bool = True
     native_goal_max_turns: int = 25
+    # Native /loop coexistence (task #761): when True, a worker parked
+    # between native ``/loop`` fires (it self-scheduled a ScheduleWakeup
+    # tick and is waiting to resume) is left undisturbed — the idle-
+    # watcher won't nudge it and speculative dispatch won't preload over
+    # it — until its next tick. ``native_loop_grace_seconds`` pads the
+    # ``(in Ns)`` dwell read from the wakeup signal so a slightly-late
+    # resume or clock skew doesn't reopen the window early. Set the flag
+    # False to revert to treating a parked loop as a plain idle worker.
+    native_loop_coexistence_enabled: bool = True
+    native_loop_grace_seconds: float = 30.0
+    # Per-task token-budget governor (task #762). A ceiling on the OUTPUT
+    # tokens a single task may burn while ACTIVE — the article's
+    # "non-negotiable budget ceiling" stopping condition. On a subscription
+    # the meter is the rate limit, not dollars, so this counts tokens. When
+    # a task crosses the ceiling the governor escalates (dashboard
+    # notification) and PARKS it (ACTIVE → BLOCKED) so it stops burning and
+    # awaits the operator — it does NOT kill the PTY mid-turn. 0 = disabled
+    # (default, safe rollout); set a generous value (a true runaway burns
+    # far more output than a normal task — see cross-project #523 at ~257K
+    # output tokens) to catch runaways without parking legitimate work.
+    task_token_ceiling: int = 0
     # Plan-mode gate for user-request tasks: when True (default), the
     # dispatch path prepends a plan-mode preamble to tasks originating
     # from Jira sync, email import, or the operator dashboard (i.e.

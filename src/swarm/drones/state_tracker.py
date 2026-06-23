@@ -667,6 +667,15 @@ class WorkerStateTracker:
         self._detectors.pressure.check(worker)
         self._detectors.recovery.check(worker, content)
         self._detectors.rate_limit.check(worker, content)
+        # Native /loop coexistence (task #761): only providers that emit
+        # the ScheduleWakeup signal can be loop-armed, so gate the scan on
+        # the provider capability AND the config flag — a clean no-op for
+        # everything else.
+        if (
+            self.drone_config.native_loop_coexistence_enabled
+            and self._get_provider(worker).supports_native_loop
+        ):
+            self._detectors.loop.check(worker, content)
 
         if self._decision_executor._should_skip_decide(worker, changed, enabled):
             return had_action, transitioned, state_changed
@@ -702,3 +711,4 @@ class WorkerStateTracker:
         self._operator_continued.discard(dw.name)
         # Detectors with per-worker state need their own cleanup hook.
         self._detectors.rate_limit.forget(dw.name)
+        self._detectors.loop.forget(dw.name)

@@ -92,6 +92,11 @@ class IdleWatcher:
         Optional ``(worker_name) -> bool``.  Returning ``True`` skips
         the nudge for that worker (e.g. hit the 5hr Claude quota —
         prompting would stack stale work behind a dead quota).
+    loop_armed_check:
+        Optional ``(worker_name) -> float | None``.  Returns the seconds
+        a worker is parked between native ``/loop`` fires (task #761), or
+        ``None`` when it isn't loop-armed.  A positive value skips the
+        nudge so a worker waiting to resume its own loop is left alone.
     """
 
     def __init__(
@@ -109,12 +114,14 @@ class IdleWatcher:
         mcp_followup_delay_seconds: float = _MCP_FOLLOWUP_DELAY_SECONDS,
         escalate_to_operator: Callable[[str, str], None] | None = None,
         worker_busy_check: Callable[[Worker], bool] | None = None,
+        loop_armed_check: Callable[[str], float | None] | None = None,
     ) -> None:
         self._config = drone_config
         self._task_board = task_board
         self._drone_log = drone_log
         self._send_to_worker = send_to_worker
         self._rate_limit_check = rate_limit_check
+        self._loop_armed_check = loop_armed_check
         # Task #315: how long to wait between firing /mcp and the
         # follow-up task nudge. Overridable so tests can run with 0
         # without sleeping for real wall time.
@@ -408,6 +415,17 @@ class IdleWatcher:
             except Exception:
                 _log.debug(
                     "idle_watcher: worker_busy_check raised for %s", worker.name, exc_info=True
+                )
+        # Native /loop coexistence (task #761): a worker that self-scheduled
+        # its next loop tick is parked, not free — leave it until it re-wakes.
+        if self._loop_armed_check is not None:
+            try:
+                remaining = self._loop_armed_check(worker.name)
+                if remaining is not None and remaining > 0:
+                    return f"native /loop armed (next tick in ~{remaining:.0f}s)"
+            except Exception:
+                _log.debug(
+                    "idle_watcher: loop_armed_check raised for %s", worker.name, exc_info=True
                 )
         return None
 

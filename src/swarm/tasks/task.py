@@ -134,6 +134,14 @@ class SwarmTask:
     cost_budget: float = 0.0
     cost_spent: float = 0.0
     _cost_warned: bool = field(default=False, repr=False)
+    # Token-budget governor (#762): per-task OUTPUT-token burn accounting.
+    # Runtime-only (NOT persisted) — accumulated from worker usage deltas
+    # while this task is ACTIVE and reset on daemon restart along with the
+    # worker delta tracking. The ceiling itself lives in
+    # ``DroneConfig.task_token_ceiling`` (0 = disabled). ``_token_ceiling_
+    # breached`` is the one-shot guard so the escalate+park fires once.
+    tokens_spent: int = 0
+    _token_ceiling_breached: bool = field(default=False, repr=False)
     # Knowledge consolidation: learnings captured on completion
     learnings: str = ""
     # Verifier drone state (item 4 of the 10-repo bundle).

@@ -165,6 +165,18 @@ class LLMProvider(ABC):
         return False
 
     @property
+    def supports_native_loop(self) -> bool:
+        """Whether the CLI has a native cadence-based ``/loop`` command.
+
+        When True, Swarm watches for the ScheduleWakeup tool result a
+        parked loop emits and leaves the worker undisturbed until its
+        next tick (the loop-coexistence guard). False = clean no-op;
+        non-Claude providers never emit the signal, so the guard is a
+        pure no-op for them by construction.
+        """
+        return False
+
+    @property
     def supports_resume(self) -> bool:
         """Whether the headless CLI supports --resume for session continuity."""
         return False
