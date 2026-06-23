@@ -60,7 +60,19 @@ def _free_port() -> int:
 
 
 def _seed(daemon) -> None:
-    """Populate the isolated daemon with generic FAKE demo data."""
+    """Populate the isolated daemon with generic FAKE demo data.
+
+    Tuned so the Harness digest shows a realistic mix: 3 actionable items
+    (approval rule + playbook promote + playbook retire) and 2 display-only
+    items (error-prone tool + dreamer pattern). Notes on the tuning:
+      * MCP buzz entries must be UNIQUE — the buzz log collapses consecutive
+        identical entries via repeat_count, which would undercount tool calls.
+      * Playbooks need DISTINCT bodies — identical bodies hash to the same
+        content_hash and the second create() dedups into the first.
+      * One command-bearing decision entry (``docker run``) drives a clean
+        approval-rule suggestion: suggest_rule prefers an extracted command
+        over the common-token fallback, so it ignores the MCP noise.
+    """
     from swarm.drones.log import DroneAction, LogCategory
     from swarm.playbooks.models import Playbook, PlaybookStatus
     from swarm.worker.worker import Worker, WorkerState
@@ -80,44 +92,63 @@ def _seed(daemon) -> None:
     daemon.standing_loop.pause("web-frontend")
 
     # --- Harness digest signals ----------------------------------------- #
-    # Error-prone MCP tool (display-only suggestion): 12 calls, 4 errors.
-    for i in range(12):
-        snippet = "error: missing required field 'target_worker'" if i < 4 else f"ok #{i}"
+    # Error-prone MCP tool (display-only): 14 calls, 5 distinct errors = 36%.
+    tool_errors = [
+        "error: missing required field 'target_worker'",
+        "error: unknown priority 'critical'",
+        "error: task #4120 not found",
+        "error: invalid acceptance_criteria (expected list)",
+        "error: worker 'billing' is not registered",
+    ]
+    for i in range(14):
+        snippet = tool_errors[i] if i < len(tool_errors) else f"task #{4100 + i} created"
         daemon.drone_log.add(
             DroneAction.CONTINUED,
             "api-service",
             f"mcp:swarm_create_task → {snippet}",
             category=LogCategory.MESSAGE,
         )
-    # A healthy tool for contrast.
-    for i in range(15):
+    # A healthy tool for contrast (all unique).
+    for i in range(12):
         daemon.drone_log.add(
             DroneAction.CONTINUED,
             "web-frontend",
-            f"mcp:swarm_check_messages → 2 unread #{i}",
+            f"mcp:swarm_check_messages → {i} unread from peers",
             category=LogCategory.MESSAGE,
         )
-
-    # Playbooks: one low-win-rate (retire, actionable) + one strong candidate
-    # (promote, actionable).
-    daemon.playbook_store.create(
-        Playbook(
-            name="retry-flaky-tests",
-            title="Retry flaky tests up to 3x",
-            status=PlaybookStatus.ACTIVE,
-            uses=12,
-            wins=2,
-            losses=9,
+    # Operator-reviewed decisions for a clean ``escalate docker run`` rule.
+    for i in range(4):
+        daemon.drone_log.add(
+            DroneAction.ESCALATED,
+            "data-pipeline",
+            f"Bash · docker run --rm -v /data:/data etl-image stage-{i}",
+            category=LogCategory.DRONE,
         )
-    )
+
+    # Playbooks (DISTINCT bodies): a strong candidate to promote + a
+    # low-win-rate active one to retire.
     daemon.playbook_store.create(
         Playbook(
             name="grep-before-edit",
             title="Grep all call sites before changing a signature",
+            body="Before changing any function signature, grep for every call site "
+            "(hooks, tests, components) and update them in a single pass.",
             status=PlaybookStatus.CANDIDATE,
             uses=6,
             wins=5,
             losses=1,
+        )
+    )
+    daemon.playbook_store.create(
+        Playbook(
+            name="retry-flaky-tests",
+            title="Retry flaky tests up to 3x",
+            body="When a test fails, re-run it up to three times before reporting "
+            "the failure to the operator.",
+            status=PlaybookStatus.ACTIVE,
+            uses=13,
+            wins=2,
+            losses=10,
         )
     )
 
