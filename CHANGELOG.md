@@ -10,6 +10,37 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.23] - 2026-06-23
+
+Loop-engineering pass — inspired by the 2026 "loop engineering" / agent-harness
+writing. Audited Swarm against the loop checklist and closed the gaps.
+
+### Features
+
+- **Native `/loop` coexistence (#761):** a worker parked between native `/loop`
+  fires is no longer nudged or assigned over. A stateful `LoopDetector` reads the
+  ScheduleWakeup signal (`Next wakeup scheduled for … (in Ns)`) for a precise
+  no-disturb window; the worker stays `RESTING` with a dispatch-protection guard.
+  Provider-gated via `supports_native_loop`.
+- **Per-task token-budget governor (#762):** the "non-negotiable budget ceiling"
+  stopping condition. `DroneConfig.task_token_ceiling` (output tokens, default 0 =
+  off) charges each worker's output-token delta to its ACTIVE task; on breach the
+  task is escalated and parked (`ACTIVE → BLOCKED`) without interrupting the PTY.
+- **Standing background-improvement loops (#765):** operator-controlled recurring
+  task generators. Idle-triggered off the empty-queue self-loop hook (preempted by
+  any real task), a rolling daily per-loop token cap, and a dashboard "Loops" tab
+  with per-worker start/pause/stop, a global kill switch, and a live burn readout.
+- **Operator-gated harness-improvement digest (#789):** closes the hill-climbing
+  loop the safe way — aggregates the signals Swarm already mines (error-prone
+  tools, suggested approval rules, playbook win-rates, dreamer patterns, override
+  tuning) into a dashboard "Harness" tab with one-click apply for low-risk actions
+  only. Display-only items (tool/prompt rewrites) never auto-apply; the route is
+  GET-only and adds no apply endpoints.
+
+### Changes
+
+### Fixes
+
 ## [2026.6.21] - 2026-06-21
 
 ### Features
