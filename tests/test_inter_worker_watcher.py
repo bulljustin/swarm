@@ -76,12 +76,14 @@ def _watcher(
     sender: _Sender | None = None,
     task_board: MagicMock | None = None,
     spawn_handoff_task=None,
+    nudge_idle_for_informational: bool = False,
 ) -> tuple[InterWorkerMessageWatcher, _Sender, MagicMock]:
     sender = sender if sender is not None else _Sender()
     drone_log = MagicMock()
     cfg = DroneConfig(
         idle_nudge_interval_seconds=interval,
         idle_nudge_debounce_seconds=debounce,
+        nudge_idle_for_informational=nudge_idle_for_informational,
     )
     w = InterWorkerMessageWatcher(
         drone_config=cfg,
@@ -420,76 +422,59 @@ async def test_skipped_entry_debounced_per_worker() -> None:
 
 
 # ---------------------------------------------------------------------------
-# No-task widening: idle worker without an active task → ANY unread nudges
+# Wake-up scoping (task #873): informational messages NEVER wake an idle
+# worker — even one with no active task. This reverses the task #271 "no-task
+# widening" by default, because that widening was the rate-limit amplifier
+# (one worker's FYI ``finding`` broadcast woke every idle, task-less worker).
+# Action-required types (``dependency`` / ``warning``) still wake. Operators
+# can opt back into the legacy widening via ``nudge_idle_for_informational``.
 # ---------------------------------------------------------------------------
-#
-# Closes the gap that prompted this change: operators were having to
-# manually tell idle workers "check your messages" because the actionable
-# filter (#271) skipped FYI-style messages. With no active task, the
-# worker is idle anyway and the operator wants the inbox processed.
 
 
 @pytest.mark.asyncio
-async def test_no_task_resting_with_finding_nudges() -> None:
-    """RESTING worker, no active task, only a `finding` in inbox →
-    nudge fires (the no-task widening). Pre-fix, this would hit the
-    informational-only skip path."""
-    store = _store({"hub": [_message("platform", "hub", msg_type="finding")]})
+@pytest.mark.parametrize("msg_type", ["finding", "status", "note"])
+@pytest.mark.parametrize("state", [WorkerState.RESTING, WorkerState.SLEEPING])
+async def test_no_task_informational_does_not_nudge(msg_type: str, state: WorkerState) -> None:
+    """Default behavior (#873): an idle, task-less worker is NOT woken for
+    an informational finding/status/note — it hits the SKIPPED path instead.
+    Pre-#873 the no-task widening nudged on any unread type."""
+    store = _store({"hub": [_message("platform", "hub", msg_type=msg_type)]})
     board = _task_board()  # no workers have tasks
     watcher, sender, drone_log = _watcher(store=store, task_board=board)
 
-    sent = await watcher.sweep([_worker("hub", WorkerState.RESTING)], now=1000.0)
+    sent = await watcher.sweep([_worker("hub", state)], now=1000.0)
 
-    assert sent == 1
-    assert len(sender.calls) == 1
-    assert "platform" in sender.calls[0][1]
-    assert "swarm_check_messages" in sender.calls[0][1]
-    nudge_entries = [
-        c for c in drone_log.add.call_args_list if c.args[0] is DroneAction.AUTO_NUDGE_MESSAGE
+    assert sent == 0
+    assert sender.calls == []
+    # The skip is logged for operator visibility.
+    skipped = [
+        c
+        for c in drone_log.add.call_args_list
+        if c.args[0] is DroneAction.AUTO_NUDGE_MESSAGE_SKIPPED
     ]
-    assert len(nudge_entries) == 1
-    # Buzz log surfaces which path fired so audits can tell apart
-    # narrow (#271) vs widened (no-task) nudges.
-    assert "no-task" in nudge_entries[0].args[2]
+    assert len(skipped) == 1
 
 
 @pytest.mark.asyncio
-async def test_no_task_resting_with_status_nudges() -> None:
-    """`status` is the lowest-signal type; widened path fires anyway
-    when the worker is idle without a task."""
-    store = _store({"hub": [_message("platform", "hub", msg_type="status")]})
+@pytest.mark.parametrize("msg_type", ["finding", "status", "note"])
+async def test_no_task_informational_nudges_when_widening_opted_in(msg_type: str) -> None:
+    """Opt-in legacy path: with ``nudge_idle_for_informational=True`` the
+    task #271 no-task widening is restored — any unread type wakes an idle,
+    task-less worker, labelled ``[no-task]`` in the buzz log."""
+    store = _store({"hub": [_message("platform", "hub", msg_type=msg_type)]})
     board = _task_board()
-    watcher, sender, _ = _watcher(store=store, task_board=board)
+    watcher, sender, drone_log = _watcher(
+        store=store, task_board=board, nudge_idle_for_informational=True
+    )
 
     sent = await watcher.sweep([_worker("hub", WorkerState.RESTING)], now=1000.0)
 
     assert sent == 1
     assert len(sender.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_no_task_resting_with_note_nudges() -> None:
-    """`note` (Queen-side annotations, msg_type from #248) reaches the
-    inter-worker watcher via cross-worker notes; widened path fires."""
-    store = _store({"hub": [_message("platform", "hub", msg_type="note")]})
-    board = _task_board()
-    watcher, sender, _ = _watcher(store=store, task_board=board)
-
-    sent = await watcher.sweep([_worker("hub", WorkerState.RESTING)], now=1000.0)
-
-    assert sent == 1
-
-
-@pytest.mark.asyncio
-async def test_no_task_sleeping_with_finding_nudges() -> None:
-    """SLEEPING is treated identically to RESTING for the widened path."""
-    store = _store({"hub": [_message("platform", "hub", msg_type="finding")]})
-    board = _task_board()
-    watcher, sender, _ = _watcher(store=store, task_board=board)
-
-    sent = await watcher.sweep([_worker("hub", WorkerState.SLEEPING)], now=1000.0)
-
-    assert sent == 1
+    nudge = next(
+        c for c in drone_log.add.call_args_list if c.args[0] is DroneAction.AUTO_NUDGE_MESSAGE
+    )
+    assert "no-task" in nudge.args[2]
 
 
 @pytest.mark.asyncio
@@ -652,9 +637,10 @@ async def test_no_handoff_task_when_recipient_has_active_task() -> None:
 
 @pytest.mark.asyncio
 async def test_no_handoff_task_for_informational_only_message() -> None:
-    """Spawn is scoped to action-bearing types — a status/finding ping
-    to a task-less worker still nudges (no-task widening) but does NOT
-    spawn a task (would flood the board with FYI chatter)."""
+    """Spawn is scoped to action-bearing types — a status/finding ping to a
+    task-less worker neither spawns a task NOR (post-#873) nudges: an
+    informational message never wakes an idle worker. It hits the SKIPPED
+    path instead."""
     msg = _message("public-website", "realtruth", msg_type="status", msg_id=985)
     store = _store({"realtruth": [msg]})
     spawn = AsyncMock(return_value=True)
@@ -663,8 +649,8 @@ async def test_no_handoff_task_for_informational_only_message() -> None:
     sent = await watcher.sweep([_worker("realtruth", WorkerState.RESTING)], now=1000.0)
 
     spawn.assert_not_awaited()
-    assert sent == 1  # no-task widening still nudges on any unread
-    assert len(sender.calls) == 1
+    assert sent == 0  # #873: informational does not wake an idle worker
+    assert sender.calls == []
 
 
 @pytest.mark.asyncio
@@ -749,3 +735,63 @@ async def test_new_unread_message_resets_streak() -> None:
     unread["aria"] = [m1, _message("project-root", "aria", msg_type="dependency", msg_id=2)]
     await watcher.sweep([_worker("aria", WorkerState.RESTING)], now=2000.0)
     assert len(sender.calls) == 3
+
+
+# ---------------------------------------------------------------------------
+# #873 acceptance: a single worker's broadcast must not mass-wake the fleet
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_finding_fanout_does_not_mass_wake_fleet() -> None:
+    """Acceptance criterion (#873): simulate one worker fanning an identical
+    informational ``finding`` out to 20+ idle, task-less recipients (the
+    2026-06-25 uuid-v14 incident). The watcher must wake NONE of them — an
+    informational message is never grounds to pull an idle worker off the
+    prompt, so the rate-limit amplifier is closed."""
+    recipients = [f"worker-{i}" for i in range(24)]
+    store = _store(
+        {
+            r: [_message("platform", r, msg_type="finding", msg_id=i)]
+            for i, r in enumerate(recipients)
+        }
+    )
+    board = _task_board()  # none of them have an active task
+    watcher, sender, drone_log = _watcher(store=store, task_board=board)
+
+    workers = [_worker(r, WorkerState.RESTING) for r in recipients]
+    sent = await watcher.sweep(workers, now=1000.0)
+
+    assert sent == 0
+    assert sender.calls == []
+    # Each idle recipient logs a SKIPPED entry instead — operator visibility
+    # without a wake-up.
+    skipped = [
+        c
+        for c in drone_log.add.call_args_list
+        if c.args[0] is DroneAction.AUTO_NUDGE_MESSAGE_SKIPPED
+    ]
+    assert len(skipped) == 24
+
+
+@pytest.mark.asyncio
+async def test_warning_in_fanout_still_wakes_only_actionable_recipients() -> None:
+    """Mixed fan-out: most recipients get an informational finding (no wake),
+    but one gets a genuine ``warning`` (action-required → wake). Only the
+    actionable recipient is nudged — scoped wake-ups, not all-or-nothing."""
+    recipients = [f"worker-{i}" for i in range(20)]
+    unread = {
+        r: [_message("platform", r, msg_type="finding", msg_id=i)] for i, r in enumerate(recipients)
+    }
+    # worker-7 instead receives an action-required warning.
+    unread["worker-7"] = [_message("platform", "worker-7", msg_type="warning", msg_id=999)]
+    store = _store(unread)
+    board = _task_board()
+    watcher, sender, _ = _watcher(store=store, task_board=board)
+
+    workers = [_worker(r, WorkerState.RESTING) for r in recipients]
+    sent = await watcher.sweep(workers, now=1000.0)
+
+    assert sent == 1
+    assert len(sender.calls) == 1
+    assert sender.calls[0][0] == "worker-7"

@@ -142,6 +142,24 @@ class DroneConfig:
     # get spammed.
     idle_nudge_interval_seconds: float = 180.0
     idle_nudge_debounce_seconds: float = 900.0
+    # Inter-worker message wake-up scoping (task #873). When False (default),
+    # the InterWorkerMessageWatcher only wakes an idle recipient for
+    # ACTION-REQUIRED message types (``dependency`` / ``warning``) — an
+    # informational ``finding`` / ``status`` / ``note`` never pulls an idle
+    # worker off the prompt, even when it has no active task. This closes the
+    # rate-limit-amplifier hole where one worker's broadcast of an FYI finding
+    # woke the whole fleet. Set True to restore the task #271 "no-task
+    # widening" where ANY unread type nudges a task-less idle worker.
+    nudge_idle_for_informational: bool = False
+    # Per-sender fan-out cap on identical direct messages (task #873). A single
+    # worker may reach at most ``message_fanout_max_recipients`` DISTINCT
+    # recipients with the SAME message body inside
+    # ``message_fanout_window_seconds`` before ``swarm_send_message`` rejects
+    # further distinct recipients and directs the worker to the explicit ``*``
+    # broadcast path. Bounds the blast radius of a worker hand-enumerating the
+    # roster in one burst. ``max_recipients <= 0`` or ``window <= 0`` disables.
+    message_fanout_max_recipients: int = 5
+    message_fanout_window_seconds: float = 60.0
     # #611 P1: periodic INV-1/2 reconcile sweep, independent of worker state
     # changes. The reactive trigger only fires when a worker leaves a working
     # state, so a >1-ACTIVE violation created while a worker stays BUZZING would

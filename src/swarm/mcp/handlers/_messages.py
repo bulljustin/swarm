@@ -142,6 +142,153 @@ def _handle_check_messages(
     return [{"type": "text", "text": "\n".join(lines)}]
 
 
+def _known_worker_names(d: SwarmDaemon) -> set[str] | None:
+    """Return the set of registered worker names (+ the Queen), or ``None``.
+
+    Sourced from ``d.config.workers`` (the configured roster — the same
+    source the ``*`` broadcast fan-out uses), not the live PTYs, so an
+    offline-but-configured worker still validates. ``None`` means the roster
+    can't be determined (no real config — e.g. a minimal test fixture), in
+    which case the caller fails open and skips recipient validation rather
+    than crash a legitimate send.
+    """
+    from swarm.worker.worker import QUEEN_WORKER_NAME
+
+    workers = getattr(getattr(d, "config", None), "workers", None)
+    if not isinstance(workers, (list, tuple)):
+        return None
+    names = {n for w in workers if isinstance((n := getattr(w, "name", None)), str) and n}
+    if not names:
+        return None
+    names.add(QUEEN_WORKER_NAME)
+    return names
+
+
+def _guard_direct_send(
+    d: SwarmDaemon, worker_name: str, recipient: str, content: str
+) -> tuple[str, list[TextContent] | None]:
+    """Validate the recipient + enforce the fan-out cap for a 1:1 send.
+
+    Returns ``(canonical_recipient, None)`` when the send may proceed, or
+    ``(recipient, error_response)`` when a guard blocks it — the caller
+    returns the error verbatim. Task #873.
+    """
+    from swarm.drones.log import LogCategory, SystemAction
+    from swarm.worker.worker import QUEEN_WORKER_NAME
+
+    # (a) Recipient validation — reject a send to a name that is not a
+    #     registered worker instead of silently enqueuing a row no one reads.
+    #     The #873 incident wrote rows to nonexistent workers (aria, …).
+    known = _known_worker_names(d)
+    if known is not None:
+        from swarm.messages.send_guard import resolve_recipient
+
+        canonical = resolve_recipient(known, recipient)
+        if canonical is None:
+            d.drone_log.add(
+                SystemAction.REJECTED,
+                worker_name,
+                f"→ {recipient}: not a registered worker (message dropped)",
+                category=LogCategory.MESSAGE,
+            )
+            return recipient, [
+                {
+                    "type": "text",
+                    "text": (
+                        f"'{recipient}' is not a registered worker — message not sent. "
+                        f"Known workers: {', '.join(sorted(known))}. "
+                        "Use '*' to broadcast to all workers."
+                    ),
+                }
+            ]
+        recipient = canonical
+
+    # (b) Fan-out cap — a worker may reach only a small number of DISTINCT
+    #     recipients with an IDENTICAL body in a short window before it must
+    #     use the explicit '*' broadcast path. The Queen is exempt (she holds
+    #     the authority a worker lacks). ``is False`` is deliberate: a
+    #     MagicMock daemon in unrelated tests yields a truthy stub here.
+    fanout_guard = getattr(d, "fanout_guard", None)
+    if (
+        fanout_guard is not None
+        and worker_name != QUEEN_WORKER_NAME
+        and fanout_guard.check(worker_name, recipient, content) is False
+    ):
+        d.drone_log.add(
+            SystemAction.REJECTED,
+            worker_name,
+            f"→ {recipient}: fan-out cap exceeded (identical message); use '*'",
+            category=LogCategory.MESSAGE,
+        )
+        return recipient, [
+            {
+                "type": "text",
+                "text": (
+                    "Fan-out cap reached: you've already sent this same message to the "
+                    "maximum number of distinct workers in a short window. To reach the "
+                    "rest of the fleet, send it once with to='*' (a real broadcast) "
+                    "instead of messaging workers one by one."
+                ),
+            }
+        ]
+
+    return recipient, None
+
+
+def _handle_broadcast(
+    d: SwarmDaemon, worker_name: str, msg_type: str, content: str
+) -> list[TextContent]:
+    """Fan a ``to='*'`` send out to every registered worker (minus sender).
+
+    ``send(..., "*", ...)`` would write a single row whose ``read_at`` column
+    belongs to whichever worker called ``get_unread`` first — so the
+    broadcast "won" by the first reader and nobody else saw it. The roster is
+    sourced from ``d.config.workers`` (configured roster), NOT ``d.workers``
+    (live PTYs); messages persist in SQLite, so workers offline at send time
+    still pick up the broadcast when they start and call ``get_unread``.
+    """
+    from swarm.drones.log import LogCategory, SystemAction
+    from swarm.worker.worker import QUEEN_WORKER_NAME
+
+    configured = getattr(getattr(d, "config", None), "workers", None) or []
+    roster_names: list[str] = []
+    seen: set[str] = set()
+    for w in configured:
+        name = getattr(w, "name", None)
+        if not name or name == worker_name or name in seen:
+            continue
+        seen.add(name)
+        roster_names.append(name)
+    ids = d.message_store.broadcast(worker_name, roster_names, msg_type, content)
+    d.drone_log.add(
+        SystemAction.OPERATOR,
+        worker_name,
+        f"→ * ({len(ids)} recipient(s)): {content[:80]}",
+        category=LogCategory.MESSAGE,
+    )
+    if not ids:
+        return [{"type": "text", "text": "No other workers registered to receive broadcast."}]
+    # Broadcast reached the Queen if she's in the configured roster.
+    if QUEEN_WORKER_NAME in roster_names and worker_name != QUEEN_WORKER_NAME:
+        # broadcast() preserves ``recipients`` order for successful sends.
+        # Our pre-filtered roster already drops empties + the sender, so in
+        # the happy path ``ids`` and ``roster_names`` align 1:1. Only a
+        # mid-broadcast sqlite failure (send returns None) would shorten ids;
+        # in that edge case skip mark-read rather than mis-target another
+        # worker's row.
+        queen_msg_id: int | None = None
+        if len(ids) == len(roster_names):
+            queen_msg_id = ids[roster_names.index(QUEEN_WORKER_NAME)]
+        _auto_relay_to_queen(d, worker_name, msg_type, content, message_id=queen_msg_id)
+    recipients_list = ", ".join(sorted(roster_names))
+    return [
+        {
+            "type": "text",
+            "text": f"Broadcast sent to {len(ids)} worker(s): {recipients_list}.",
+        }
+    ]
+
+
 def _handle_send_message(
     d: SwarmDaemon, worker_name: str, args: SendMessageArgs
 ) -> list[TextContent]:
@@ -170,56 +317,16 @@ def _handle_send_message(
             )
             return [{"type": "text", "text": text}]
 
-    # Wildcard = broadcast to every *registered* worker (minus the sender).
-    # send(..., "*", ...) would write a single row whose read_at column
-    # belongs to whichever worker called get_unread() first — so the
-    # broadcast "won" by the first reader and nobody else saw it.
-    #
-    # The roster is sourced from ``d.config.workers`` (the configured
-    # roster), NOT ``d.workers`` (the currently-running PTYs). Messages
-    # persist in SQLite, so workers that aren't running at send time
-    # still pick up the broadcast when they start and call get_unread().
-    # Iterating live processes only would silently skip offline workers —
-    # the original bug users reported as "broadcast returned success but
-    # never arrived."
     if recipient == "*":
-        configured = getattr(getattr(d, "config", None), "workers", None) or []
-        roster_names: list[str] = []
-        seen: set[str] = set()
-        for w in configured:
-            name = getattr(w, "name", None)
-            if not name or name == worker_name or name in seen:
-                continue
-            seen.add(name)
-            roster_names.append(name)
-        ids = d.message_store.broadcast(worker_name, roster_names, msg_type, content)
-        d.drone_log.add(
-            SystemAction.OPERATOR,
-            worker_name,
-            f"→ * ({len(ids)} recipient(s)): {content[:80]}",
-            category=LogCategory.MESSAGE,
-        )
-        if not ids:
-            return [{"type": "text", "text": "No other workers registered to receive broadcast."}]
-        # Broadcast reached the Queen if she's in the configured roster.
-        if QUEEN_WORKER_NAME in roster_names and worker_name != QUEEN_WORKER_NAME:
-            # broadcast() preserves ``recipients`` order for successful sends.
-            # Our pre-filtered roster already drops empties + the sender, so
-            # in the happy path ``ids`` and ``roster_names`` align 1:1. Only
-            # a mid-broadcast sqlite failure (send returns None) would shorten
-            # ids; in that edge case skip mark-read rather than mis-target
-            # another worker's row.
-            queen_msg_id: int | None = None
-            if len(ids) == len(roster_names):
-                queen_msg_id = ids[roster_names.index(QUEEN_WORKER_NAME)]
-            _auto_relay_to_queen(d, worker_name, msg_type, content, message_id=queen_msg_id)
-        recipients_list = ", ".join(sorted(roster_names))
-        return [
-            {
-                "type": "text",
-                "text": f"Broadcast sent to {len(ids)} worker(s): {recipients_list}.",
-            }
-        ]
+        return _handle_broadcast(d, worker_name, msg_type, content)
+
+    # Direct (1:1) path. Task #873: deterministic send-path guards (recipient
+    # validation + fan-out cap) close the rate-limit-amplifier hole where a
+    # worker hand-enumerated the roster in one burst. Returns the canonical
+    # recipient on success, or an error response the caller surfaces verbatim.
+    recipient, guard_error = _guard_direct_send(d, worker_name, recipient, content)
+    if guard_error is not None:
+        return guard_error
 
     msg_id = d.message_store.send(worker_name, recipient, msg_type, content)
     if msg_id:

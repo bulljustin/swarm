@@ -665,13 +665,17 @@ class TestSendMessageQueenAutoRelay:
         d.message_store.send = MagicMock(return_value="msg-1")
         d.message_store.broadcast = MagicMock(return_value=["msg-2", "msg-3"])
         d.send_to_worker = AsyncMock()
-        # Two-worker roster: queen + hub.
+        # Roster: queen + hub + platform. ``platform`` is included because
+        # several tests below message it directly, and task #873 added
+        # recipient validation that rejects sends to unregistered names.
         wk1 = MagicMock()
         wk1.name = "queen"
         wk2 = MagicMock()
         wk2.name = "hub"
+        wk3 = MagicMock()
+        wk3.name = "platform"
         d.config = MagicMock()
-        d.config.workers = [wk1, wk2]
+        d.config.workers = [wk1, wk2, wk3]
         return d
 
     def test_message_to_queen_auto_relays_to_queen_pty(self):
@@ -724,9 +728,10 @@ class TestSendMessageQueenAutoRelay:
         still gets the relay so the broadcast doesn't silently sit in
         her inbox."""
         d = self._daemon()
-        # Sender "hub" is filtered from the roster, so broadcast sees
-        # recipients=["queen"] and returns one id.
-        d.message_store.broadcast = MagicMock(return_value=["msg-2"])
+        # Sender "hub" is filtered from the roster [queen, hub, platform], so
+        # broadcast sees recipients=[queen, platform] and returns one id each
+        # (in roster order). The relay targets the queen's id (index 0).
+        d.message_store.broadcast = MagicMock(return_value=["queen-id", "platform-id"])
         handle_tool_call(
             d,
             "hub",
@@ -787,7 +792,9 @@ class TestSendMessageQueenAutoRelay:
         """For ``to="*"`` the queen's row needs to be identified from
         the broadcast result so mark_read targets her id only."""
         d = self._daemon()
-        d.message_store.broadcast = MagicMock(return_value=["queen-id"])
+        # Roster minus sender "hub" → [queen, platform]; broadcast returns one
+        # id per recipient in roster order, so the queen's id is at index 0.
+        d.message_store.broadcast = MagicMock(return_value=["queen-id", "platform-id"])
         handle_tool_call(
             d,
             "hub",
@@ -924,6 +931,141 @@ class TestBroadcastGate:
         )
         d.message_store.broadcast.assert_called_once()
         assert not self._gated_action_logged(d)
+
+
+class TestSendGuards:
+    """Task #873: recipient validation + per-sender fan-out cap on
+    ``swarm_send_message``, hardening against a worker hand-enumerating the
+    roster in one burst (the rate-limit amplifier observed 2026-06-25)."""
+
+    def _daemon(self, *, max_recipients: int = 3) -> MagicMock:
+        from unittest.mock import AsyncMock
+
+        from swarm.messages.send_guard import FanoutGuard
+
+        d = MagicMock()
+        d.drone_log = MagicMock()
+        d.message_store = MagicMock()
+        d.message_store.send = MagicMock(return_value="msg-1")
+        d.message_store.broadcast = MagicMock(return_value=["msg-2"])
+        d.send_to_worker = AsyncMock()
+        d.fanout_guard = FanoutGuard(max_recipients=max_recipients, window_seconds=60.0)
+        roster = []
+        for name in ("queen", "hub", "platform", "nexus", "admin", "root", "budgetbug"):
+            w = MagicMock()
+            w.name = name
+            roster.append(w)
+        d.config = MagicMock()
+        d.config.workers = roster
+        return d
+
+    def test_unknown_recipient_is_rejected_and_not_enqueued(self):
+        d = self._daemon()
+        res = handle_tool_call(
+            d,
+            "platform",
+            "swarm_send_message",
+            {"to": "sillytavern", "type": "finding", "content": "x"},
+        )
+        d.message_store.send.assert_not_called()
+        assert "not a registered worker" in res[0]["text"]
+
+    def test_unknown_recipient_logs_rejection(self):
+        from swarm.drones.log import SystemAction
+
+        d = self._daemon()
+        handle_tool_call(
+            d, "platform", "swarm_send_message", {"to": "aria", "type": "finding", "content": "x"}
+        )
+        assert any(
+            call.args and call.args[0] == SystemAction.REJECTED
+            for call in d.drone_log.add.call_args_list
+        )
+
+    def test_known_recipient_passes(self):
+        d = self._daemon()
+        res = handle_tool_call(
+            d, "platform", "swarm_send_message", {"to": "hub", "type": "finding", "content": "x"}
+        )
+        d.message_store.send.assert_called_once()
+        assert "Message sent to hub" in res[0]["text"]
+
+    def test_recipient_is_canonicalized(self):
+        """A case-variant recipient resolves to the roster's canonical name,
+        so the persisted row matches what get_unread later queries."""
+        d = self._daemon()
+        handle_tool_call(
+            d, "platform", "swarm_send_message", {"to": "HUB", "type": "finding", "content": "x"}
+        )
+        d.message_store.send.assert_called_once()
+        assert d.message_store.send.call_args.args[1] == "hub"
+
+    def test_validation_fails_open_without_config(self):
+        """No real roster (minimal fixture) → skip validation rather than
+        crash a legitimate send."""
+        from unittest.mock import AsyncMock
+
+        d = MagicMock()
+        d.drone_log = MagicMock()
+        d.message_store = MagicMock()
+        d.message_store.send = MagicMock(return_value="msg-1")
+        d.send_to_worker = AsyncMock()
+        d.config = MagicMock()
+        d.config.workers = MagicMock()  # not a list → roster indeterminate
+        del d.fanout_guard
+        res = handle_tool_call(
+            d, "w", "swarm_send_message", {"to": "anything", "type": "finding", "content": "x"}
+        )
+        d.message_store.send.assert_called_once()
+        assert "Message sent" in res[0]["text"]
+
+    def test_fanout_cap_blocks_burst_beyond_limit(self):
+        """The exact #873 symptom: identical message hand-sent to many
+        distinct workers. First ``max_recipients`` go through; the rest are
+        blocked and pointed at the '*' broadcast path."""
+        d = self._daemon(max_recipients=3)
+        targets = ["hub", "platform", "nexus", "admin", "root", "budgetbug"]
+        results = [
+            handle_tool_call(
+                d,
+                "queen-sender-not",  # a regular worker name not in roster-as-sender
+                "swarm_send_message",
+                {"to": t, "type": "finding", "content": "uuid v14 memo"},
+            )
+            for t in targets
+        ]
+        delivered = [r for r in results if "Message sent" in r[0]["text"]]
+        blocked = [r for r in results if "Fan-out cap reached" in r[0]["text"]]
+        assert len(delivered) == 3
+        assert len(blocked) == 3
+        assert d.message_store.send.call_count == 3
+
+    def test_distinct_content_not_capped(self):
+        """Different findings to different workers are legitimate — not a
+        fan-out of one identical message."""
+        d = self._daemon(max_recipients=2)
+        for i, t in enumerate(["hub", "platform", "nexus", "admin"]):
+            res = handle_tool_call(
+                d,
+                "root",
+                "swarm_send_message",
+                {"to": t, "type": "finding", "content": f"distinct finding {i}"},
+            )
+            assert "Message sent" in res[0]["text"]
+        assert d.message_store.send.call_count == 4
+
+    def test_queen_is_exempt_from_fanout_cap(self):
+        """The Queen holds authority a worker lacks; her direct sends are not
+        fan-out-capped."""
+        d = self._daemon(max_recipients=2)
+        for t in ["hub", "platform", "nexus", "admin", "root"]:
+            handle_tool_call(
+                d,
+                "queen",
+                "swarm_send_message",
+                {"to": t, "type": "status", "content": "same memo"},
+            )
+        assert d.message_store.send.call_count == 5
 
 
 # ---------------------------------------------------------------------------

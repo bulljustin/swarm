@@ -144,6 +144,16 @@ class SwarmDaemon(EventEmitter):
         from swarm.messages.store import MessageStore
 
         self.message_store = MessageStore(swarm_db=self.swarm_db)
+        # Task #873: per-sender fan-out cap on identical direct messages, so a
+        # worker can't hand-enumerate the roster in one burst and wake the
+        # whole fleet. Read live from drone config (hot-reload picks up knob
+        # changes via the same path that rebinds the watchers).
+        from swarm.messages.send_guard import FanoutGuard
+
+        self.fanout_guard = FanoutGuard(
+            max_recipients=self.config.drones.message_fanout_max_recipients,
+            window_seconds=self.config.drones.message_fanout_window_seconds,
+        )
         from swarm.tasks.blockers import BlockerStore
 
         self.blocker_store = BlockerStore(self.swarm_db)

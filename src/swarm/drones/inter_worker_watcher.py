@@ -208,15 +208,19 @@ class InterWorkerMessageWatcher:
             inter_worker = [m for m in unread if m.sender and m.sender != QUEEN_WORKER_NAME]
             if not inter_worker:
                 continue
-            # Task #271: narrow the nudge trigger to action-required
-            # message types when the worker has an active task — info
-            # messages (finding / status / note) shouldn't pull a worker
-            # off in-flight work.  When the worker has NO active task on
-            # the board, the situation flips: the worker is idle anyway,
-            # the operator wants the inbox processed, and ANY unread
-            # message is reason enough to nudge.  task_board=None
-            # (e.g. minimal test setups) defaults to the conservative
-            # with-task path so we don't over-nudge by accident.
+            # Task #271 narrowed the nudge trigger to action-required types
+            # when the worker has an active task, but WIDENED it back to ANY
+            # unread type when the worker had no active task ("idle anyway —
+            # process the inbox"). Task #873 found that no-task widening was a
+            # rate-limit amplifier: one worker broadcasting an FYI ``finding``
+            # woke every idle, task-less worker in the fleet. So by default
+            # (``nudge_idle_for_informational=False``) the action-required
+            # filter now applies UNCONDITIONALLY — informational
+            # finding/status/note never wakes an idle worker, with or without
+            # a task. Operators can opt back into the legacy no-task widening
+            # via the config flag. ``_maybe_spawn_handoff`` (action-bearing
+            # types only) is unaffected, so genuine handoffs to a task-less
+            # idle worker still become tracked tasks.
             has_task = self._has_active_task(worker.name)
             # task #442: a task-less idle recipient of an action-bearing
             # handoff gets a *tracked* task, not just a nudge. Done first
@@ -226,10 +230,13 @@ class InterWorkerMessageWatcher:
             if not has_task and await self._maybe_spawn_handoff(worker.name, inter_worker, now=now):
                 sent += 1
                 continue
-            if has_task:
-                actionable = [m for m in inter_worker if m.msg_type in _ACTION_REQUIRED_MSG_TYPES]
-            else:
+            widen_for_informational = (not has_task) and bool(
+                getattr(self._config, "nudge_idle_for_informational", False)
+            )
+            if widen_for_informational:
                 actionable = inter_worker
+            else:
+                actionable = [m for m in inter_worker if m.msg_type in _ACTION_REQUIRED_MSG_TYPES]
             if not actionable:
                 # Informational-only and the worker IS on a task: skip +
                 # log so the operator has visibility on why the inbox
