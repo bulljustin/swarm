@@ -86,6 +86,18 @@ TOOLS: list[dict[str, Any]] = [
                         "shows up in the buzz log so the operator can audit."
                     ),
                 },
+                "acknowledge_engaged": {
+                    "type": "boolean",
+                    "description": (
+                        "Set true to acknowledge the target may already be "
+                        "engaged on this work and suppress the advisory NOTE. "
+                        "The prompt sends either way — this only records that "
+                        "you saw the engagement context (logged for audit). "
+                        "Use it when re-issuing a prompt the tool flagged as a "
+                        "possible collision but which you intend regardless "
+                        "(P1, scope correction, pause)."
+                    ),
+                },
             },
             "required": ["worker", "prompt", "reason"],
             "examples": [
@@ -168,16 +180,36 @@ def _handle_prompt_worker(
 
     if worker.state == WorkerState.STUNG:
         return [{"type": "text", "text": f"Worker '{target}' is STUNG — revive before prompting."}]
+
+    import time as _time
+
     from swarm.drones.log import LogCategory, SystemAction
+    from swarm.server.engagement import engagement_snapshot
+
+    # #913: engagement awareness. Surface the target's live engagement to the
+    # Queen and soft-flag a likely collision (target freshly engaged on work
+    # that may be the same) — but the prompt ALWAYS sends. This is advisory:
+    # the Queen must be able to reach a busy worker (P1, pause, scope fix).
+    # ``send_to_worker`` is untouched.
+    ack = bool(args.get("acknowledge_engaged"))
+    drones_cfg = getattr(d.config, "drones", None)
+    window = float(getattr(drones_cfg, "prompt_collision_window_seconds", 0.0))
+    snap = engagement_snapshot(
+        getattr(d, "task_board", None), getattr(d, "message_store", None), target, now=_time.time()
+    )
+    collided = snap.collides_within(window)
+    engagement_str = snap.summary()
 
     # Note in the buzz log whether the prompt will queue (worker mid-turn)
     # or land on an idle worker — auditing benefits from that distinction.
     will_queue = worker.state == WorkerState.BUZZING
     queue_tag = " [queued, worker BUZZING]" if will_queue else ""
+    ack_tag = " [ack-engaged]" if ack else (" [COLLISION]" if collided else "")
     d.drone_log.add(
         SystemAction.OPERATOR,
         target,
-        f"queen prompt{queue_tag} ({reason[:80]}): {prompt[:100]}",
+        f"queen prompt{queue_tag}{ack_tag} ({reason[:80]}): {prompt[:100]} "
+        f"|| engagement: {engagement_str}",
         category=LogCategory.OPERATOR,
     )
     worker_svc = getattr(d, "worker_svc", None)
@@ -185,7 +217,13 @@ def _handle_prompt_worker(
         return [{"type": "text", "text": "Worker service unavailable."}]
     _fire_async(worker_svc.send_to_worker(target, prompt, _log_operator=False))
     suffix = " — queued for next turn" if will_queue else ""
-    return [{"type": "text", "text": f"Prompt sent to {target}{suffix}."}]
+    lines = [f"Prompt sent to {target}{suffix}.", f"Target engagement: {engagement_str}."]
+    if collided and not ack:
+        lines.append(
+            "NOTE: target appears freshly engaged; if this prompt is about the same work it "
+            "may be redundant — re-issue with acknowledge_engaged=true to suppress this notice."
+        )
+    return [{"type": "text", "text": "\n".join(lines)}]
 
 
 HANDLERS = {

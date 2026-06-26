@@ -373,6 +373,24 @@ class TaskCoordinator:
 
     # ----- handoff -----
 
+    def _buzz_suppressed_duplicate(
+        self, recipient: str, sender: str, dup: object, msg_id: object
+    ) -> None:
+        """#913: buzz-log a handoff spawn suppressed as duplicate work."""
+        dup_num = getattr(dup, "number", "?")
+        try:
+            self._d.drone_log.add(
+                DroneAction.AUTO_HANDOFF_TASK,
+                recipient,
+                (
+                    f"suppressed duplicate: handoff from {sender} (msg #{msg_id}) duplicates "
+                    f"{recipient}'s active task #{dup_num} — not re-spawned, source marked read"
+                ),
+                category=LogCategory.DRONE,
+            )
+        except Exception:
+            _log.debug("spawn_handoff: suppression buzz-log failed", exc_info=True)
+
     async def spawn_handoff_task(self, recipient: str, message: object) -> bool:
         """task #442: turn an actionable cross-worker handoff to an idle,
         task-less recipient into a *tracked* task assigned to that
@@ -419,6 +437,38 @@ class TaskCoordinator:
                 recipient,
             )
             return False
+        # #913: duplicate-work suppression. Beyond the exact-title dedup above,
+        # skip the spawn if the recipient is ALREADY engaged on equivalent work
+        # — a task that is_duplicate_work-matches the incoming handoff (same
+        # source-worker + high title similarity / same number / same jira_key).
+        # This is the automated-path complement to the engagement awareness the
+        # Queen gets on queen_prompt_worker (#913): two converging coordination
+        # paths shouldn't stack a second tracked task for the same work. Mark
+        # the source message read (the #894 consume pattern) so the watcher
+        # doesn't re-relay it, and log the suppression — no silent drop. Gated
+        # by ``suppress_duplicate_handoff``.
+        drones_cfg = getattr(getattr(d, "config", None), "drones", None)
+        if bool(getattr(drones_cfg, "suppress_duplicate_handoff", False)):
+            from types import SimpleNamespace
+
+            from swarm.server.engagement import is_duplicate_work
+
+            incoming = SimpleNamespace(number=0, jira_key="", source_worker=sender, title=title)
+            similarity = float(getattr(drones_cfg, "duplicate_title_similarity", 0.8))
+            try:
+                dup = is_duplicate_work(
+                    incoming, board.active_tasks_for_worker(recipient), similarity=similarity
+                )
+            except Exception:
+                dup = None
+            if dup is not None:
+                if msg_id is not None and getattr(d, "message_store", None) is not None:
+                    try:
+                        d.message_store.mark_read(recipient, [msg_id])
+                    except Exception:
+                        _log.debug("spawn_handoff: mark_read on suppress failed", exc_info=True)
+                self._buzz_suppressed_duplicate(recipient, sender, dup, msg_id)
+                return False
         description = (
             f"Auto-spawned by the inter-worker watcher (task #442): "
             f"{recipient} was idle and task-less when {sender} sent a "

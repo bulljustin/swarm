@@ -160,6 +160,20 @@ class DroneConfig:
     # roster in one burst. ``max_recipients <= 0`` or ``window <= 0`` disables.
     message_fanout_max_recipients: int = 5
     message_fanout_window_seconds: float = 60.0
+    # Engagement-aware coordination (task #913). ``prompt_collision_window_
+    # seconds`` is how recently a worker must have become engaged (ACTIVE task
+    # started, or an inbound handoff arrived) for queen_prompt_worker to append
+    # an advisory "target appears freshly engaged" NOTE to its result — the
+    # prompt ALWAYS sends regardless (advisory only). 0 disables the flag.
+    prompt_collision_window_seconds: float = 300.0
+    # ``suppress_duplicate_handoff`` — when True, the inter-worker handoff
+    # spawner skips creating a task the recipient already holds an equivalent
+    # of (is_duplicate_work match), marking the source message read + logging
+    # the suppression. False restores pre-#913 behavior. ``duplicate_title_
+    # similarity`` is the Jaccard title-overlap threshold for the same-source
+    # duplicate match (0.0-1.0).
+    suppress_duplicate_handoff: bool = True
+    duplicate_title_similarity: float = 0.8
     # #611 P1: periodic INV-1/2 reconcile sweep, independent of worker state
     # changes. The reactive trigger only fires when a worker leaves a working
     # state, so a >1-ACTIVE violation created while a worker stays BUZZING would

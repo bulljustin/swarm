@@ -344,6 +344,11 @@ def _parse_config(path: Path) -> HiveConfig:
         nudge_idle_for_informational=bool(drones_data.get("nudge_idle_for_informational", False)),
         message_fanout_max_recipients=int(drones_data.get("message_fanout_max_recipients", 5)),
         message_fanout_window_seconds=float(drones_data.get("message_fanout_window_seconds", 60.0)),
+        prompt_collision_window_seconds=float(
+            drones_data.get("prompt_collision_window_seconds", 300.0)
+        ),
+        suppress_duplicate_handoff=bool(drones_data.get("suppress_duplicate_handoff", True)),
+        duplicate_title_similarity=float(drones_data.get("duplicate_title_similarity", 0.8)),
         native_goal_enabled=drones_data.get("native_goal_enabled", True),
         native_goal_max_turns=drones_data.get("native_goal_max_turns", 25),
         native_loop_coexistence_enabled=drones_data.get("native_loop_coexistence_enabled", True),

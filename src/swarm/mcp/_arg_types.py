@@ -271,3 +271,4 @@ class QueenPromptWorkerArgs(TypedDict, total=False):
     worker: str
     prompt: str
     reason: str
+    acknowledge_engaged: bool  # #913: ack the worker is engaged, suppress advisory
