@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 from swarm.mcp._arg_types import CreateTaskArgs
 from swarm.mcp.types import TextContent
+from swarm.tasks.authority_guard import screen_task_authority
+from swarm.tasks.task import HOLD_TAG
 
 if TYPE_CHECKING:
     from swarm.server.daemon import SwarmDaemon
@@ -87,6 +89,17 @@ TOOLS: list[dict[str, Any]] = [
                         "objective criteria."
                     ),
                 },
+                "hold": {
+                    "type": "boolean",
+                    "description": (
+                        "File the task as HOLD/dormant (default false). A HOLD "
+                        "task stays UNASSIGNED and visible/tracked on the board but "
+                        "is NOT auto-dispatched to a worker — use it for deferred "
+                        "work you're deliberately parking (e.g. 'hold this jQuery "
+                        "3→4 upgrade until we decide'). An operator assigns it "
+                        "manually when it's time; the auto-assigner leaves it alone."
+                    ),
+                },
             },
             "required": ["title"],
             "examples": [
@@ -115,25 +128,80 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+def _resolve_attachments(args: CreateTaskArgs) -> tuple[list[str] | None, list[TextContent] | None]:
+    """Resolve + existence-check attachment paths. Returns (paths, error)."""
+    attachments = args.get("attachments") or None
+    if not attachments:
+        return None, None
+    validated: list[str] = []
+    for p in attachments:
+        rp = Path(p).resolve()
+        if not rp.exists():
+            return None, [{"type": "text", "text": f"Attachment not found: {p}"}]
+        validated.append(str(rp))
+    return validated, None
+
+
+def _park_for_authority_review(
+    d: SwarmDaemon, worker_name: str, task: Any, matched: str
+) -> list[TextContent]:
+    """#894: an auto-generated task fabricated operator authority — log a
+    warning + return the parked-for-review response (NOT dispatched)."""
+    from swarm.drones.log import LogCategory, SystemAction
+
+    try:
+        d.drone_log.add(
+            SystemAction.TASK_AUTHORITY_GATED,
+            worker_name,
+            (
+                f"#{task.number} cites operator authority without a verifiable source "
+                f"('{matched}') — parked HOLD for review, not dispatched"
+            ),
+            category=LogCategory.TASK,
+        )
+    except Exception:
+        pass
+    return [
+        {
+            "type": "text",
+            "text": (
+                f"Task #{task.number} created but PARKED (HOLD) for operator review: its text "
+                f"claims operator authority ('{matched}') without a verifiable source. "
+                f"Auto-generated tasks can't assert operator decisions — if this is real, cite "
+                f"the operator's approval (a thread/message/link) or have the operator dispatch "
+                f"it. NOT auto-dispatched."
+            ),
+        }
+    ]
+
+
 def _handle_create_task(
     d: SwarmDaemon, worker_name: str, args: CreateTaskArgs
 ) -> list[TextContent]:
     title = args.get("title", "")
     if not title:
         return [{"type": "text", "text": "Missing 'title'"}]
-    attachments = args.get("attachments") or None
-    if attachments:
-        validated: list[str] = []
-        for p in attachments:
-            rp = Path(p).resolve()
-            if not rp.exists():
-                return [{"type": "text", "text": f"Attachment not found: {p}"}]
-            validated.append(str(rp))
-        attachments = validated
+    attachments, att_error = _resolve_attachments(args)
+    if att_error is not None:
+        return att_error
+    description = args.get("description", "")
+    # #894: a task arriving here is AUTO-GENERATED (a worker/drone filed it via
+    # swarm_create_task — operator tasks come through the dashboard). If its
+    # text CITES operator authority / a policy amendment with no verifiable
+    # source, it's fabricated authorization (the @types/node "operator opted
+    # in, amendment in flight" case). Park it HOLD for operator review instead
+    # of dispatching — never let an auto-task invent authority to act.
+    authority = screen_task_authority(title, description)
+    # A HOLD task is filed UNASSIGNED but tagged so the auto-assign drone won't
+    # grab it (see SwarmTask.is_available). Stays visible/tracked. Authority-
+    # flagged tasks are forced HOLD regardless of the caller's ``hold`` arg.
+    on_hold = bool(args.get("hold")) or authority.flagged
+    tags = [HOLD_TAG] if on_hold else None
     task = d.create_task(
         title=title,
-        description=args.get("description", ""),
+        description=description,
         attachments=attachments,
+        tags=tags,
         actor=worker_name,
     )
     # Acceptance criteria flow through edit_task to keep create_task's
@@ -144,6 +212,8 @@ def _handle_create_task(
         cleaned = [str(c).strip() for c in raw_criteria if str(c).strip()]
         if cleaned:
             d.edit_task(task.id, acceptance_criteria=cleaned, actor=worker_name)
+    if authority.flagged:
+        return _park_for_authority_review(d, worker_name, task, authority.matched)
     target = args.get("target_worker")
     # Record cross-project attribution BEFORE assigning. When a worker
     # files a task for a *different* worker, the calling worker is the
@@ -187,7 +257,8 @@ def _handle_create_task(
             except Exception:
                 pass
             d.task_board.assign(task.id, target)
-    return [{"type": "text", "text": f"Task created: #{task.number} {title}"}]
+    suffix = " [HOLD — parked, not auto-dispatched]" if (tags and not target) else ""
+    return [{"type": "text", "text": f"Task created: #{task.number} {title}{suffix}"}]
 
 
 HANDLERS = {"swarm_create_task": _handle_create_task}

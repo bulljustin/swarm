@@ -433,6 +433,23 @@ class InterWorkerMessageWatcher:
             return False
         for m in handoffs:
             self._spawned_msg_ids.add(m.id)
+        # #894: PERSIST the spawn-dedup by CONSUMING the source message(s).
+        # ``_spawned_msg_ids`` is in-memory only, so a daemon restart wiped it
+        # and the watcher re-relayed an already-handed-off (and since-retracted)
+        # source message as fresh tasks over and over — the @types/node-26
+        # #890/#891/#896/#897 loop hub reported. Marking the source messages
+        # read is durable (DB ``read_at``): the spawned task is now the carrier,
+        # so ``get_unread`` never re-surfaces them after a restart, which both
+        # PURGES the offending message from the spawner queue and makes the
+        # declined-task re-spawn guard survive a restart.
+        try:
+            self._message_store.mark_read(recipient, [m.id for m in handoffs])
+        except Exception:
+            _log.debug(
+                "inter_worker_watcher: mark_read after handoff spawn failed for %s",
+                recipient,
+                exc_info=True,
+            )
         # Reuse the nudge debounce slot so the existing inter-worker
         # nudge path doesn't also fire for this worker right after.
         self._last_nudge[recipient] = now

@@ -184,6 +184,14 @@ class SystemAction(Enum):
     # created/folded; SKIPPED = declined, ineligible, or rate-capped.
     PLAYBOOK_SYNTHESIZED = "PLAYBOOK_SYNTHESIZED"
     PLAYBOOK_SKIPPED = "PLAYBOOK_SKIPPED"
+    # #894: synthesis blocked by a safety gate (sub-floor confidence, or an
+    # equivalent playbook created very recently) — NOT auto-synthesized; the
+    # candidate is dropped and surfaced for Queen/operator approval instead.
+    PLAYBOOK_GATED = "PLAYBOOK_GATED"
+    # #894: an auto-generated task CITED operator authority / a policy
+    # amendment with no verifiable source — parked HOLD for operator review
+    # instead of being dispatched (the fabricated @types/node opt-in case).
+    TASK_AUTHORITY_GATED = "TASK_AUTHORITY_GATED"
     # Phase 2 outcome loop: APPLIED = recalled into a task dispatch;
     # PROMOTED = candidate→active on good winrate; RETIRED = auto-pruned.
     PLAYBOOK_APPLIED = "PLAYBOOK_APPLIED"

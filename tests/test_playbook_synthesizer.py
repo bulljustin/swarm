@@ -175,3 +175,89 @@ async def test_synthesize_caps_oversized_body(tmp_path):
     pb = await s.synthesize(_Task(), worker="swarm", resolution=_RESOLUTION)
     assert pb is not None
     assert len(pb.body) == MAX_BODY_LEN
+
+
+# ---------------------------------------------------------------------------
+# #894: low-confidence + recent-equivalent synthesis gates
+# ---------------------------------------------------------------------------
+
+
+class _RecordingLog:
+    def __init__(self):
+        self.entries = []
+
+    def add(self, action, worker, detail, *, category=None):
+        self.entries.append((action, worker, detail))
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_playbook_is_gated(tmp_path):
+    """#894 cond 1: a conf=0.00 (sub-floor) playbook is NOT auto-synthesized —
+    it's dropped + logged PLAYBOOK_GATED for approval, not persisted."""
+    from swarm.drones.log import SystemAction
+
+    verdict = dict(_GOOD)
+    verdict["confidence"] = 0.0  # the degenerate fleet-wide case
+    verdict["scope"] = "global"
+    log = _RecordingLog()
+    s, store = _synth(tmp_path, queen=_Queen(verdict), drone_log=log)
+    pb = await s.synthesize(_Task(), worker="swarm", resolution=_RESOLUTION)
+    assert pb is None  # not synthesized
+    assert store.get("webhook-retry-with-backoff") is None  # not persisted
+    assert any(a is SystemAction.PLAYBOOK_GATED for a, _, _ in log.entries)
+
+
+@pytest.mark.asyncio
+async def test_confidence_above_floor_synthesizes(tmp_path):
+    """Control: a confident playbook (0.82 > floor 0.3) still synthesizes."""
+    s, store = _synth(tmp_path, queen=_Queen(_GOOD))  # _GOOD conf=0.82
+    pb = await s.synthesize(_Task(), worker="swarm", resolution=_RESOLUTION)
+    assert pb is not None
+    assert store.get("webhook-retry-with-backoff") is not None
+
+
+@pytest.mark.asyncio
+async def test_confidence_floor_zero_disables_gate(tmp_path):
+    """min_synthesis_confidence=0 disables the floor (legacy behaviour)."""
+    cfg = PlaybookConfig(min_synthesis_confidence=0.0)
+    verdict = dict(_GOOD)
+    verdict["confidence"] = 0.0
+    s, store = _synth(tmp_path, queen=_Queen(verdict), cfg=cfg)
+    pb = await s.synthesize(_Task(), worker="swarm", resolution=_RESOLUTION)
+    assert pb is not None  # floor disabled → persists even at 0.0
+
+
+@pytest.mark.asyncio
+async def test_recent_equivalent_is_skipped(tmp_path):
+    """#894 cond 2: a same-name playbook created within the window means an
+    equivalent was just synthesized — re-synthesis is gated, not re-spawned."""
+    from swarm.drones.log import SystemAction
+    from swarm.playbooks.models import Playbook
+
+    now = 1_000_000.0
+    log = _RecordingLog()
+    s, store = _synth(tmp_path, queen=_Queen(_GOOD), drone_log=log, now=lambda: now)
+    # An equivalent program was synthesized 10 minutes ago.
+    store.create(
+        Playbook(name="webhook-retry-with-backoff", body="prior body", created_at=now - 600)
+    )
+    pb = await s.synthesize(_Task(), worker="swarm", resolution=_RESOLUTION)
+    assert pb is None
+    assert any(a is SystemAction.PLAYBOOK_GATED for a, _, _ in log.entries)
+
+
+@pytest.mark.asyncio
+async def test_old_equivalent_does_not_block(tmp_path):
+    """An equivalent created OUTSIDE the window doesn't block re-synthesis."""
+    from swarm.playbooks.models import Playbook
+
+    now = 1_000_000.0
+    cfg = PlaybookConfig(resynthesis_window_seconds=3600.0)  # 1h window
+    s, store = _synth(tmp_path, queen=_Queen(_GOOD), cfg=cfg, now=lambda: now)
+    # Same name + same body as _GOOD → store.create folds it (content_hash
+    # match); created 2h ago so the gate's 1h window doesn't fire.
+    store.create(
+        Playbook(name="webhook-retry-with-backoff", body=_GOOD["body"], created_at=now - 7200)
+    )
+    pb = await s.synthesize(_Task(), worker="swarm", resolution=_RESOLUTION)
+    assert pb is not None  # 2h-old equivalent is outside the 1h window → folds, not gated

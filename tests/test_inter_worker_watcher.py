@@ -795,3 +795,53 @@ async def test_warning_in_fanout_still_wakes_only_actionable_recipients() -> Non
     assert sent == 1
     assert len(sender.calls) == 1
     assert sender.calls[0][0] == "worker-7"
+
+
+# ---------------------------------------------------------------------------
+# #894: handoff spawn must consume the source message durably so a daemon
+# restart can't re-relay an already-handed-off (or retracted) message.
+# ---------------------------------------------------------------------------
+
+
+class _StatefulStore:
+    """Message store fake whose mark_read actually consumes messages, so
+    get_unread reflects it across a simulated restart."""
+
+    def __init__(self, unread: dict[str, list[MagicMock]]) -> None:
+        self._unread = {k: list(v) for k, v in unread.items()}
+        self.read_ids: list[int] = []
+
+    def get_unread(self, name: str) -> list[MagicMock]:
+        return [m for m in self._unread.get(name, []) if m.read_at is None]
+
+    def mark_read(self, recipient: str, ids: list[int]) -> int:
+        hit = 0
+        for m in self._unread.get(recipient, []):
+            if m.id in ids and m.read_at is None:
+                m.read_at = 1.0
+                hit += 1
+        self.read_ids.extend(ids)
+        return hit
+
+
+@pytest.mark.asyncio
+async def test_handoff_spawn_consumes_source_message_durably() -> None:
+    """A handed-off source message is marked read on spawn, so even after a
+    daemon restart (fresh in-memory _spawned_msg_ids) the watcher does NOT
+    re-spawn it — the #894 @types/node re-relay loop."""
+    msg = _message("project-root", "hub", msg_type="dependency", msg_id=890)
+    store = _StatefulStore({"hub": [msg]})
+    spawn = AsyncMock(return_value=True)
+
+    w1, _, _ = _watcher(store=store, task_board=_task_board(), spawn_handoff_task=spawn)
+    sent1 = await w1.sweep([_worker("hub", WorkerState.RESTING)], now=1000.0)
+    assert sent1 == 1
+    assert spawn.await_count == 1
+    assert msg.read_at is not None  # source message consumed (durable dedup)
+
+    # Simulate a daemon restart: brand-new watcher (empty _spawned_msg_ids),
+    # SAME persistent store. The consumed message must not re-spawn.
+    w2, _, _ = _watcher(store=store, task_board=_task_board(), spawn_handoff_task=spawn)
+    sent2 = await w2.sweep([_worker("hub", WorkerState.RESTING)], now=2000.0)
+    assert sent2 == 0
+    assert spawn.await_count == 1  # still exactly one spawn, ever

@@ -333,6 +333,17 @@ class PlaybookConfig:
     eligible_task_types: list[str] = field(default_factory=lambda: ["feature", "bug", "chore"])
     min_resolution_chars: int = 80
     max_synth_per_hour: int = 20
+    # #894: low-confidence safety gate. A synthesized playbook whose
+    # Queen-assigned confidence is below this floor is NOT auto-persisted —
+    # it's dropped + logged (PLAYBOOK_GATED) for Queen/operator approval.
+    # The 2026-06-26 incident auto-synthesized a conf=0.00, scope=global
+    # playbook that spawned a duplicate fleet-wide program. 0.0 disables.
+    min_synthesis_confidence: float = 0.3
+    # #894: recently-synthesized-equivalent guard. If a playbook with the
+    # same (deterministic-slug) name was created within this window, skip
+    # re-synthesizing it — stops a just-completed program from re-spawning.
+    # 0 disables.
+    resynthesis_window_seconds: float = 86400.0  # 24h
     auto_promote_uses: int = 3
     auto_promote_winrate: float = 0.7
     prune_min_uses: int = 5

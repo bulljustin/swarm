@@ -12,6 +12,14 @@ from typing import Any
 
 _log = logging.getLogger("swarm.tasks.task")
 
+# #894: reserved tags that mark an UNASSIGNED task as HOLD / dormant /
+# do-not-auto-dispatch. The auto-assign drone skips any task carrying one of
+# these (see ``SwarmTask.is_available``), so a deliberately-parked deferred
+# item (e.g. a "HOLD until upstream ships" dependency bump) stays on the
+# board without being grabbed by a mismatched worker. Matched case-folded.
+HOLD_TAG = "hold"  # canonical tag applied when filing a task on HOLD
+HOLD_TAGS: frozenset[str] = frozenset({HOLD_TAG, "dormant", "no-auto-dispatch", "deferred"})
+
 
 class TaskStatus(Enum):
     """Lifecycle states for a SwarmTask.
@@ -274,14 +282,27 @@ class SwarmTask:
             self.resolution = resolution
 
     @property
+    def is_on_hold(self) -> bool:
+        """#894: True when this task is flagged HOLD / dormant / do-not-auto-
+        dispatch. A filer (e.g. project-root) parks a deferred item like a
+        jQuery 3→4 or eslint 9→10 upgrade by leaving it UNASSIGNED but tagged
+        — it stays visible/tracked on the board, but the auto-assign drone
+        must NOT grab it and hand it to a mismatched worker (the 2026-06-26
+        incident: a HOLD eslint-10 item auto-dispatched to wifi-portal).
+        """
+        return bool(HOLD_TAGS & {str(t).strip().lower() for t in self.tags})
+
+    @property
     def is_available(self) -> bool:
         """True when the auto-assign drone is allowed to pick this task up.
 
         In the new vocabulary only ``UNASSIGNED`` qualifies — Backlog
         tasks are explicitly parked and need an operator promotion before
-        they enter the work pipeline.
+        they enter the work pipeline. #894: a HOLD/dormant-tagged task is
+        also excluded — it's deferred work the filer parked on purpose, not
+        free work for the auto-assigner to dispatch.
         """
-        return self.status == TaskStatus.UNASSIGNED
+        return self.status == TaskStatus.UNASSIGNED and not self.is_on_hold
 
     @property
     def age(self) -> float:

@@ -139,6 +139,10 @@ class PlaybookSynthesizer:
         pb = self._verdict_to_playbook(result, task, worker)
         if pb is None:
             return None
+        gated = self._gate(pb, worker)
+        if gated is not None:
+            self._buzz(SystemAction.PLAYBOOK_GATED, worker, gated)
+            return None
         try:
             saved = self._store.create(pb)
         except Exception:
@@ -152,6 +156,43 @@ class PlaybookSynthesizer:
             f"{saved.name} (conf={pb.confidence:.2f}, scope={pb.scope})",
         )
         return saved
+
+    def _gate(self, pb: Playbook, worker: str) -> str | None:
+        """#894: safety gates that block AUTO-synthesis of a fleet-affecting
+        playbook. Returns a reason string when the playbook must NOT be
+        auto-persisted (logged as PLAYBOOK_GATED, surfaced for approval), or
+        ``None`` to allow synthesis.
+
+        Two gates, both motivated by the 2026-06-26 incident where a
+        conf=0.00, scope=global playbook auto-synthesized and re-spawned a
+        just-completed fleet-wide program:
+
+        1. Confidence floor — a sub-floor confidence is too weak to auto-mint
+           a (potentially global/fleet-wide) procedure unreviewed.
+        2. Recent equivalent — a playbook with the same deterministic-slug
+           name created within ``resynthesis_window_seconds`` means an
+           equivalent was just synthesized; re-spawning it is the duplicate.
+        """
+        floor = float(getattr(self._cfg, "min_synthesis_confidence", 0.0) or 0.0)
+        if floor > 0.0 and pb.confidence < floor:
+            return (
+                f"{pb.name} conf={pb.confidence:.2f} < floor {floor:.2f} "
+                f"(scope={pb.scope}) — needs approval, not auto-synthesized"
+            )
+        window = float(getattr(self._cfg, "resynthesis_window_seconds", 0.0) or 0.0)
+        if window > 0.0:
+            try:
+                existing = self._store.get(pb.name)
+            except Exception:
+                existing = None
+            if existing is not None:
+                age = self._now() - float(getattr(existing, "created_at", 0.0) or 0.0)
+                if 0.0 <= age < window:
+                    return (
+                        f"{pb.name} equivalent created {int(age)}s ago "
+                        f"(< {int(window)}s window) — skip re-synthesis"
+                    )
+        return None
 
     def _verdict_to_playbook(
         self, result: dict[str, Any], task: SwarmTask, worker: str

@@ -126,6 +126,7 @@ class CreateTaskArgs(TypedDict, total=False):
     attachments: list[str]
     start: bool
     acceptance_criteria: list[str]
+    hold: bool  # #894: file as HOLD/dormant — not auto-dispatched
 
 
 class GetLearningsArgs(TypedDict, total=False):

@@ -90,6 +90,8 @@ def _serialize_playbooks(p: PlaybookConfig) -> dict[str, Any]:
         "eligible_task_types": list(p.eligible_task_types),
         "min_resolution_chars": p.min_resolution_chars,
         "max_synth_per_hour": p.max_synth_per_hour,
+        "min_synthesis_confidence": p.min_synthesis_confidence,
+        "resynthesis_window_seconds": p.resynthesis_window_seconds,
         "auto_promote_uses": p.auto_promote_uses,
         "auto_promote_winrate": p.auto_promote_winrate,
         "prune_min_uses": p.prune_min_uses,

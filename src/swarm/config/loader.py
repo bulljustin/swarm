@@ -525,6 +525,8 @@ def _parse_config(path: Path) -> HiveConfig:
         eligible_task_types=pb_data.get("eligible_task_types", ["feature", "bug", "chore"]),
         min_resolution_chars=pb_data.get("min_resolution_chars", 80),
         max_synth_per_hour=pb_data.get("max_synth_per_hour", 20),
+        min_synthesis_confidence=float(pb_data.get("min_synthesis_confidence", 0.3)),
+        resynthesis_window_seconds=float(pb_data.get("resynthesis_window_seconds", 86400.0)),
         auto_promote_uses=pb_data.get("auto_promote_uses", 3),
         auto_promote_winrate=pb_data.get("auto_promote_winrate", 0.7),
         prune_min_uses=pb_data.get("prune_min_uses", 5),
