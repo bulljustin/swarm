@@ -10,6 +10,19 @@ Swarm uses calendar versioning (`YYYY.M.D.patch`) — see `pyproject.toml` for t
 
 ### Fixes
 
+## [2026.6.27] - 2026-06-27
+
+### Features
+
+### Changes
+
+- **Mobile terminal d-pad moved to top-right:** the floating directional pad on a
+  worker terminal now anchors top-right instead of bottom-right, clearing the
+  mobile composer and the jump-to-bottom pill. Drops the bottom-edge coordination
+  (`.dpad-raised` shift, coarse-pointer `:has()` nudges, and the dead JS toggle).
+
+### Fixes
+
 ## [2026.6.23] - 2026-06-23
 
 Loop-engineering pass — inspired by the 2026 "loop engineering" / agent-harness
